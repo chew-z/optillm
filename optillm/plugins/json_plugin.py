@@ -12,6 +12,7 @@ SLUG = "json"
 # Setup logging
 logger = logging.getLogger(__name__)
 
+
 class JSONGenerator:
     def get_device(self):
         """Get the appropriate device (mps, cuda, or cpu)."""
@@ -29,12 +30,14 @@ class JSONGenerator:
         try:
             # Initialize the model and tokenizer using the new outlines API
             hf_model = AutoModelForCausalLM.from_pretrained(
-                model_name, 
+                model_name,
                 device_map="auto" if str(self.device) != "cpu" else None,
-                torch_dtype=torch.float16 if str(self.device) != "cpu" else torch.float32
+                torch_dtype=(
+                    torch.float16 if str(self.device) != "cpu" else torch.float32
+                ),
             )
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            
+
             # Create outlines model
             self.model = outlines.from_transformers(hf_model, self.tokenizer)
             logger.info(f"Successfully loaded model: {model_name}")
@@ -55,37 +58,37 @@ class JSONGenerator:
         """Convert JSON schema string to Pydantic model."""
         try:
             schema_dict = json.loads(schema_str)
-            
+
             # Extract properties and required fields
-            properties = schema_dict.get('properties', {})
-            required = schema_dict.get('required', [])
-            
+            properties = schema_dict.get("properties", {})
+            required = schema_dict.get("required", [])
+
             # Build field definitions for Pydantic
             fields = {}
             for field_name, field_def in properties.items():
                 field_type = str  # Default to string
-                
+
                 # Map JSON schema types to Python types
-                if field_def.get('type') == 'integer':
+                if field_def.get("type") == "integer":
                     field_type = int
-                elif field_def.get('type') == 'number':
+                elif field_def.get("type") == "number":
                     field_type = float
-                elif field_def.get('type') == 'boolean':
+                elif field_def.get("type") == "boolean":
                     field_type = bool
-                elif field_def.get('type') == 'array':
+                elif field_def.get("type") == "array":
                     field_type = list
-                elif field_def.get('type') == 'object':
+                elif field_def.get("type") == "object":
                     field_type = dict
-                
+
                 # Check if field is required
                 if field_name in required:
                     fields[field_name] = (field_type, ...)
                 else:
                     fields[field_name] = (Optional[field_type], None)
-            
+
             # Create dynamic Pydantic model
-            return create_model('DynamicModel', **fields)
-            
+            return create_model("DynamicModel", **fields)
+
         except Exception as e:
             logger.error(f"Error parsing JSON schema: {str(e)}")
             raise
@@ -100,11 +103,11 @@ class JSONGenerator:
             # Generate JSON response using the new API
             result = self.model(prompt, pydantic_model)
             logger.info("Successfully generated JSON response")
-            
+
             # Convert Pydantic model instance to dict
-            if hasattr(result, 'model_dump'):
+            if hasattr(result, "model_dump"):
                 return result.model_dump()
-            elif hasattr(result, 'dict'):
+            elif hasattr(result, "dict"):
                 return result.dict()
             else:
                 return dict(result)
@@ -113,12 +116,15 @@ class JSONGenerator:
             logger.error(f"Error generating JSON: {str(e)}")
             raise
 
-def extract_schema_from_response_format(response_format: Dict[str, Any]) -> Optional[str]:
+
+def extract_schema_from_response_format(
+    response_format: Dict[str, Any],
+) -> Optional[str]:
     """Extract schema from response_format field."""
     try:
         if not response_format:
             return None
-            
+
         # Check if it's the OpenAI format
         if isinstance(response_format, dict):
             if response_format.get("type") == "json_schema":
@@ -126,23 +132,32 @@ def extract_schema_from_response_format(response_format: Dict[str, Any]) -> Opti
                 if isinstance(schema_data, dict) and "schema" in schema_data:
                     return json.dumps(schema_data["schema"])
                 return json.dumps(schema_data)
-                
-        logger.warning(f"Could not extract valid schema from response_format")
+
+        logger.warning("Could not extract valid schema from response_format")
         return None
     except Exception as e:
         logger.error(f"Error extracting schema from response_format: {str(e)}")
         return None
 
-def run(system_prompt: str, initial_query: str, client, model: str, request_config: dict = None) -> Tuple[str, int]:
+
+def run(
+    system_prompt: str,
+    initial_query: str,
+    client,
+    model: str,
+    request_config: dict = None,
+) -> Tuple[str, int]:
     """Main plugin execution function."""
     logger.info("Starting JSON plugin execution")
     completion_tokens = 0
 
     try:
         # Extract schema from response_format in request_config
-        response_format = request_config.get("response_format") if request_config else None
+        response_format = (
+            request_config.get("response_format") if request_config else None
+        )
         schema = extract_schema_from_response_format(response_format)
-        
+
         if not schema:
             logger.warning("No valid schema found in response_format")
             # Fall back to regular completion if no schema is specified
@@ -150,21 +165,21 @@ def run(system_prompt: str, initial_query: str, client, model: str, request_conf
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": initial_query}
-                ]
+                    {"role": "user", "content": initial_query},
+                ],
             )
             return response.choices[0].message.content, response.usage.completion_tokens
 
         # Initialize JSON generator
         json_generator = JSONGenerator()
-        
+
         # Generate JSON response
         result = json_generator.generate_json(initial_query, schema)
-        
+
         # Convert result to string if it's not already
         json_response = json.dumps(result) if isinstance(result, dict) else str(result)
         completion_tokens = json_generator.count_tokens(json_response)
-        
+
         logger.info(f"Successfully generated JSON response: {json_response}")
         return json_response, completion_tokens
 
@@ -175,7 +190,7 @@ def run(system_prompt: str, initial_query: str, client, model: str, request_conf
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": initial_query}
-            ]
+                {"role": "user", "content": initial_query},
+            ],
         )
         return response.choices[0].message.content, response.usage.completion_tokens

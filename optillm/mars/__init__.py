@@ -8,4 +8,4 @@ Leverages OpenRouter's reasoning API for deep mathematical thinking.
 
 from .mars import multi_agent_reasoning_system
 
-__all__ = ['multi_agent_reasoning_system']
+__all__ = ["multi_agent_reasoning_system"]

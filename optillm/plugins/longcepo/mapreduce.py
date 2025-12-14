@@ -178,7 +178,10 @@ def mapreduce(
         max_tokens=longcepo_config.max_output_tokens,
         temperature=longcepo_config.temperature_reduce,
     )
-    reduce_result, upd_log = loop_until_match(gen_fn, answer_tags,)
+    reduce_result, upd_log = loop_until_match(
+        gen_fn,
+        answer_tags,
+    )
     cb_log.update(upd_log)
 
     final_answer = reduce_result

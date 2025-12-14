@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReasoningStrategy:
     """Represents an extracted reasoning strategy from an agent solution"""
+
     strategy_id: str
     agent_id: str
     problem_type: str  # 'algebra', 'geometry', 'combinatorics', 'number_theory', etc.
@@ -35,6 +36,7 @@ class ReasoningStrategy:
 @dataclass
 class StrategyEffectiveness:
     """Tracks effectiveness of strategies across different problem types"""
+
     strategy_id: str
     problem_type: str
     success_count: int = 0
@@ -63,7 +65,7 @@ class StrategyNetwork:
         self.client = client
         self.model = model
         self.config = config
-        self.max_tokens = config.get('max_tokens', 30000)
+        self.max_tokens = config.get("max_tokens", 30000)
 
         # Strategy storage and tracking
         self.strategies: Dict[str, ReasoningStrategy] = {}
@@ -79,15 +81,19 @@ class StrategyNetwork:
         self,
         workspace: MARSWorkspace,
         request_id: str = None,
-        executor: ThreadPoolExecutor = None
+        executor: ThreadPoolExecutor = None,
     ) -> Dict[str, ReasoningStrategy]:
         """Extract reasoning strategies from all agent solutions"""
         logger.info("Extracting strategies from agent solutions...")
 
         extraction_tasks = []
         for solution in workspace.solutions:
-            if not solution.agent_id.startswith('agg_'):  # Skip aggregated solutions for strategy extraction
-                task = self._extract_strategy_async(solution, workspace.problem, request_id, executor)
+            if not solution.agent_id.startswith(
+                "agg_"
+            ):  # Skip aggregated solutions for strategy extraction
+                task = self._extract_strategy_async(
+                    solution, workspace.problem, request_id, executor
+                )
                 extraction_tasks.append(task)
 
         # Run extractions in parallel
@@ -105,7 +111,9 @@ class StrategyNetwork:
                 self.strategies[strategy.strategy_id] = strategy
 
                 # Update agent's preferred strategies
-                self.agent_preferred_strategies[strategy.agent_id].append(strategy.strategy_id)
+                self.agent_preferred_strategies[strategy.agent_id].append(
+                    strategy.strategy_id
+                )
 
         logger.info(f"Extracted {len(extracted_strategies)} reasoning strategies")
         return extracted_strategies
@@ -115,7 +123,7 @@ class StrategyNetwork:
         solution: AgentSolution,
         problem: str,
         request_id: str = None,
-        executor: ThreadPoolExecutor = None
+        executor: ThreadPoolExecutor = None,
     ) -> Optional[ReasoningStrategy]:
         """Extract strategy from a single agent solution"""
         loop = asyncio.get_event_loop()
@@ -126,17 +134,16 @@ class StrategyNetwork:
                 self._extract_strategy_from_solution,
                 solution,
                 problem,
-                request_id
+                request_id,
             )
         except Exception as e:
-            logger.error(f"Failed to extract strategy from agent {solution.agent_id}: {str(e)}")
+            logger.error(
+                f"Failed to extract strategy from agent {solution.agent_id}: {str(e)}"
+            )
             return None
 
     def _extract_strategy_from_solution(
-        self,
-        solution: AgentSolution,
-        problem: str,
-        request_id: str = None
+        self, solution: AgentSolution, problem: str, request_id: str = None
     ) -> Optional[ReasoningStrategy]:
         """Extract reasoning strategy using LLM analysis"""
 
@@ -173,17 +180,17 @@ SUCCESS_INDICATORS: [indicator1], [indicator2]"""
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a mathematical strategy analysis expert. Extract reasoning patterns from solutions."},
-                    {"role": "user", "content": strategy_extraction_prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a mathematical strategy analysis expert. Extract reasoning patterns from solutions.",
+                    },
+                    {"role": "user", "content": strategy_extraction_prompt},
                 ],
-                max_tokens=self.max_tokens // 4,  # Use 1/4 of token budget for strategy extraction
+                max_tokens=self.max_tokens
+                // 4,  # Use 1/4 of token budget for strategy extraction
                 temperature=0.3,
                 timeout=120,
-                extra_body={
-                    "reasoning": {
-                        "effort": "medium"
-                    }
-                }
+                extra_body={"reasoning": {"effort": "medium"}},
             )
 
             # Log provider call if conversation logging is enabled
@@ -191,15 +198,24 @@ SUCCESS_INDICATORS: [indicator1], [indicator2]"""
                 provider_request = {
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are a mathematical strategy analysis expert."},
-                        {"role": "user", "content": strategy_extraction_prompt}
+                        {
+                            "role": "system",
+                            "content": "You are a mathematical strategy analysis expert.",
+                        },
+                        {"role": "user", "content": strategy_extraction_prompt},
                     ],
                     "max_tokens": self.max_tokens // 4,
                     "temperature": 0.3,
-                    "extra_body": {"reasoning": {"effort": "medium"}}
+                    "extra_body": {"reasoning": {"effort": "medium"}},
                 }
-                response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-                conversation_logger.log_provider_call(request_id, provider_request, response_dict)
+                response_dict = (
+                    response.model_dump()
+                    if hasattr(response, "model_dump")
+                    else response
+                )
+                conversation_logger.log_provider_call(
+                    request_id, provider_request, response_dict
+                )
 
             analysis = response.choices[0].message.content.strip()
 
@@ -207,49 +223,61 @@ SUCCESS_INDICATORS: [indicator1], [indicator2]"""
             strategy_data = self._parse_strategy_analysis(analysis)
 
             if strategy_data:
-                strategy_id = f"strategy_{solution.agent_id}_{datetime.now().strftime('%H%M%S')}"
+                strategy_id = (
+                    f"strategy_{solution.agent_id}_{datetime.now().strftime('%H%M%S')}"
+                )
 
                 return ReasoningStrategy(
                     strategy_id=strategy_id,
                     agent_id=solution.agent_id,
-                    problem_type=strategy_data.get('problem_type', 'unknown'),
-                    approach_type=strategy_data.get('approach_type', 'unknown'),
-                    key_insights=strategy_data.get('key_insights', []),
-                    mathematical_techniques=strategy_data.get('mathematical_techniques', []),
-                    solution_pattern=strategy_data.get('solution_pattern', ''),
+                    problem_type=strategy_data.get("problem_type", "unknown"),
+                    approach_type=strategy_data.get("approach_type", "unknown"),
+                    key_insights=strategy_data.get("key_insights", []),
+                    mathematical_techniques=strategy_data.get(
+                        "mathematical_techniques", []
+                    ),
+                    solution_pattern=strategy_data.get("solution_pattern", ""),
                     confidence=solution.confidence,
-                    success_indicators=strategy_data.get('success_indicators', [])
+                    success_indicators=strategy_data.get("success_indicators", []),
                 )
 
         except Exception as e:
-            logger.error(f"Strategy extraction failed for agent {solution.agent_id}: {str(e)}")
+            logger.error(
+                f"Strategy extraction failed for agent {solution.agent_id}: {str(e)}"
+            )
             return None
 
     def _parse_strategy_analysis(self, analysis: str) -> Optional[Dict[str, Any]]:
         """Parse structured strategy analysis response"""
         try:
-            lines = analysis.split('\n')
+            lines = analysis.split("\n")
             strategy_data = {}
 
             for line in lines:
                 line = line.strip()
-                if ':' in line:
-                    key, value = line.split(':', 1)
+                if ":" in line:
+                    key, value = line.split(":", 1)
                     key = key.strip().lower()
                     value = value.strip()
 
-                    if key == 'problem_type':
-                        strategy_data['problem_type'] = value
-                    elif key == 'approach_type':
-                        strategy_data['approach_type'] = value
-                    elif 'insights' in key:
-                        strategy_data['key_insights'] = [insight.strip() for insight in value.split(',')]
-                    elif 'techniques' in key:
-                        strategy_data['mathematical_techniques'] = [tech.strip() for tech in value.split(',')]
-                    elif 'pattern' in key:
-                        strategy_data['solution_pattern'] = value
-                    elif 'indicators' in key:
-                        strategy_data['success_indicators'] = [ind.strip() for ind in value.split(',')]
+                    if key == "problem_type":
+                        strategy_data["problem_type"] = value
+                    elif key == "approach_type":
+                        strategy_data["approach_type"] = value
+                    elif "insights" in key:
+                        strategy_data["key_insights"] = [
+                            insight.strip() for insight in value.split(",")
+                        ]
+                    elif "techniques" in key:
+                        strategy_data["mathematical_techniques"] = [
+                            tech.strip() for tech in value.split(",")
+                        ]
+                    elif "pattern" in key:
+                        strategy_data["solution_pattern"] = value
+                    elif "indicators" in key:
+                        strategy_data["success_indicators"] = [
+                            ind.strip() for ind in value.split(",")
+                        ]
 
             return strategy_data if strategy_data else None
 
@@ -262,34 +290,45 @@ SUCCESS_INDICATORS: [indicator1], [indicator2]"""
         workspace: MARSWorkspace,
         extracted_strategies: Dict[str, ReasoningStrategy],
         request_id: str = None,
-        executor: ThreadPoolExecutor = None
+        executor: ThreadPoolExecutor = None,
     ) -> Dict[str, List[str]]:
         """Share effective strategies across agents and generate enhanced solutions"""
         logger.info("Sharing strategies across agents...")
 
         # Classify current problem type
-        problem_type = await self._classify_problem_type(workspace.problem, request_id, executor)
+        problem_type = await self._classify_problem_type(
+            workspace.problem, request_id, executor
+        )
 
         # Find most effective strategies for this problem type
-        effective_strategies = self._get_effective_strategies_for_type(problem_type, extracted_strategies)
+        effective_strategies = self._get_effective_strategies_for_type(
+            problem_type, extracted_strategies
+        )
 
         # Generate strategy-enhanced solutions for each agent
         enhancement_tasks = []
         agent_strategies = {}
 
         for solution in workspace.solutions:
-            if not solution.agent_id.startswith('agg_'):  # Only enhance original agents
+            if not solution.agent_id.startswith("agg_"):  # Only enhance original agents
                 # Select strategies from other agents for this agent
                 cross_agent_strategies = [
-                    strategy for strategy in effective_strategies.values()
+                    strategy
+                    for strategy in effective_strategies.values()
                     if strategy.agent_id != solution.agent_id
                 ]
 
                 if cross_agent_strategies:
-                    agent_strategies[solution.agent_id] = [s.strategy_id for s in cross_agent_strategies]
+                    agent_strategies[solution.agent_id] = [
+                        s.strategy_id for s in cross_agent_strategies
+                    ]
 
                     task = self._generate_strategy_enhanced_solution_async(
-                        solution, workspace.problem, cross_agent_strategies, request_id, executor
+                        solution,
+                        workspace.problem,
+                        cross_agent_strategies,
+                        request_id,
+                        executor,
                     )
                     enhancement_tasks.append((solution.agent_id, task))
 
@@ -307,16 +346,17 @@ SUCCESS_INDICATORS: [indicator1], [indicator2]"""
                 if result:
                     enhanced_solution = result
                     workspace.add_solution(enhanced_solution)
-                    logger.info(f"Added strategy-enhanced solution from agent {enhanced_solution.agent_id}")
+                    logger.info(
+                        f"Added strategy-enhanced solution from agent {enhanced_solution.agent_id}"
+                    )
 
-        logger.info(f"Strategy sharing complete: enhanced {len(enhancement_tasks)} agents")
+        logger.info(
+            f"Strategy sharing complete: enhanced {len(enhancement_tasks)} agents"
+        )
         return agent_strategies
 
     async def _classify_problem_type(
-        self,
-        problem: str,
-        request_id: str = None,
-        executor: ThreadPoolExecutor = None
+        self, problem: str, request_id: str = None, executor: ThreadPoolExecutor = None
     ) -> str:
         """Classify the problem type for strategy matching"""
         # Check cache first
@@ -327,10 +367,7 @@ SUCCESS_INDICATORS: [indicator1], [indicator2]"""
 
         try:
             problem_type = await loop.run_in_executor(
-                executor,
-                self._classify_problem_with_llm,
-                problem,
-                request_id
+                executor, self._classify_problem_with_llm, problem, request_id
             )
 
             self.problem_type_cache[problem] = problem_type
@@ -354,23 +391,30 @@ Respond with just the category name."""
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a mathematical problem classifier."},
-                    {"role": "user", "content": classification_prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a mathematical problem classifier.",
+                    },
+                    {"role": "user", "content": classification_prompt},
                 ],
                 max_tokens=50,
                 temperature=0.1,
                 timeout=60,
-                extra_body={
-                    "reasoning": {
-                        "effort": "low"
-                    }
-                }
+                extra_body={"reasoning": {"effort": "low"}},
             )
 
             classification = response.choices[0].message.content.strip().lower()
 
             # Validate classification
-            valid_types = ['algebra', 'geometry', 'combinatorics', 'number_theory', 'calculus', 'discrete_math', 'probability']
+            valid_types = [
+                "algebra",
+                "geometry",
+                "combinatorics",
+                "number_theory",
+                "calculus",
+                "discrete_math",
+                "probability",
+            ]
             if classification in valid_types:
                 return classification
             else:
@@ -381,16 +425,17 @@ Respond with just the category name."""
             return "algebra"  # Default fallback
 
     def _get_effective_strategies_for_type(
-        self,
-        problem_type: str,
-        extracted_strategies: Dict[str, ReasoningStrategy]
+        self, problem_type: str, extracted_strategies: Dict[str, ReasoningStrategy]
     ) -> Dict[str, ReasoningStrategy]:
         """Get most effective strategies for the given problem type"""
 
         # Filter strategies by problem type and confidence
         relevant_strategies = {}
         for strategy_id, strategy in extracted_strategies.items():
-            if (strategy.problem_type == problem_type or strategy.problem_type == "unknown") and strategy.confidence >= 0.6:
+            if (
+                strategy.problem_type == problem_type
+                or strategy.problem_type == "unknown"
+            ) and strategy.confidence >= 0.6:
                 relevant_strategies[strategy_id] = strategy
 
         # If no specific strategies found, use highest confidence strategies
@@ -398,7 +443,7 @@ Respond with just the category name."""
             sorted_strategies = sorted(
                 extracted_strategies.items(),
                 key=lambda x: x[1].confidence,
-                reverse=True
+                reverse=True,
             )
             # Take top 2 strategies
             relevant_strategies = dict(sorted_strategies[:2])
@@ -411,7 +456,7 @@ Respond with just the category name."""
         problem: str,
         peer_strategies: List[ReasoningStrategy],
         request_id: str = None,
-        executor: ThreadPoolExecutor = None
+        executor: ThreadPoolExecutor = None,
     ) -> Optional[AgentSolution]:
         """Generate enhanced solution using peer strategies"""
         loop = asyncio.get_event_loop()
@@ -423,10 +468,12 @@ Respond with just the category name."""
                 original_solution,
                 problem,
                 peer_strategies,
-                request_id
+                request_id,
             )
         except Exception as e:
-            logger.error(f"Strategy enhancement failed for agent {original_solution.agent_id}: {str(e)}")
+            logger.error(
+                f"Strategy enhancement failed for agent {original_solution.agent_id}: {str(e)}"
+            )
             return None
 
     def _generate_strategy_enhanced_solution(
@@ -434,7 +481,7 @@ Respond with just the category name."""
         original_solution: AgentSolution,
         problem: str,
         peer_strategies: List[ReasoningStrategy],
-        request_id: str = None
+        request_id: str = None,
     ) -> Optional[AgentSolution]:
         """Generate solution enhanced with peer strategies"""
 
@@ -443,9 +490,15 @@ Respond with just the category name."""
         for strategy in peer_strategies[:2]:  # Limit to top 2 strategies
             strategy_insights += f"\nPeer Strategy from Agent {strategy.agent_id}:\n"
             strategy_insights += f"- Approach: {strategy.approach_type}\n"
-            strategy_insights += f"- Key Insights: {', '.join(strategy.key_insights[:3])}\n"
-            strategy_insights += f"- Techniques: {', '.join(strategy.mathematical_techniques[:3])}\n"
-            strategy_insights += f"- Success Pattern: {strategy.solution_pattern[:200]}...\n"
+            strategy_insights += (
+                f"- Key Insights: {', '.join(strategy.key_insights[:3])}\n"
+            )
+            strategy_insights += (
+                f"- Techniques: {', '.join(strategy.mathematical_techniques[:3])}\n"
+            )
+            strategy_insights += (
+                f"- Success Pattern: {strategy.solution_pattern[:200]}...\n"
+            )
 
         enhancement_prompt = f"""You are Agent {original_solution.agent_id} collaborating with other mathematical agents.
 
@@ -472,17 +525,17 @@ Enhanced Solution:"""
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a collaborative mathematical agent learning from peer insights."},
-                    {"role": "user", "content": enhancement_prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a collaborative mathematical agent learning from peer insights.",
+                    },
+                    {"role": "user", "content": enhancement_prompt},
                 ],
                 max_tokens=self.max_tokens,
-                temperature=original_solution.temperature * 0.9,  # Slightly lower for focused enhancement
+                temperature=original_solution.temperature
+                * 0.9,  # Slightly lower for focused enhancement
                 timeout=300,
-                extra_body={
-                    "reasoning": {
-                        "effort": "high"
-                    }
-                }
+                extra_body={"reasoning": {"effort": "high"}},
             )
 
             # Log provider call if conversation logging is enabled
@@ -490,46 +543,66 @@ Enhanced Solution:"""
                 provider_request = {
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are a collaborative mathematical agent learning from peer insights."},
-                        {"role": "user", "content": enhancement_prompt}
+                        {
+                            "role": "system",
+                            "content": "You are a collaborative mathematical agent learning from peer insights.",
+                        },
+                        {"role": "user", "content": enhancement_prompt},
                     ],
                     "max_tokens": self.max_tokens,
                     "temperature": original_solution.temperature * 0.9,
-                    "extra_body": {"reasoning": {"effort": "high"}}
+                    "extra_body": {"reasoning": {"effort": "high"}},
                 }
-                response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-                conversation_logger.log_provider_call(request_id, provider_request, response_dict)
+                response_dict = (
+                    response.model_dump()
+                    if hasattr(response, "model_dump")
+                    else response
+                )
+                conversation_logger.log_provider_call(
+                    request_id, provider_request, response_dict
+                )
 
             enhanced_solution_text = response.choices[0].message.content.strip()
 
             # Extract reasoning tokens
             reasoning_tokens = 0
             total_tokens = 0
-            if hasattr(response, 'usage') and response.usage:
-                total_tokens = getattr(response.usage, 'total_tokens', 0)
+            if hasattr(response, "usage") and response.usage:
+                total_tokens = getattr(response.usage, "total_tokens", 0)
                 # Check completion_tokens_details first (OpenRouter structure)
-                if hasattr(response.usage, 'completion_tokens_details') and response.usage.completion_tokens_details:
-                    reasoning_tokens = getattr(response.usage.completion_tokens_details, 'reasoning_tokens', 0)
+                if (
+                    hasattr(response.usage, "completion_tokens_details")
+                    and response.usage.completion_tokens_details
+                ):
+                    reasoning_tokens = getattr(
+                        response.usage.completion_tokens_details, "reasoning_tokens", 0
+                    )
                 # Fallback to direct usage field (standard OpenAI structure)
                 if reasoning_tokens == 0:
-                    reasoning_tokens = getattr(response.usage, 'reasoning_tokens', 0)
+                    reasoning_tokens = getattr(response.usage, "reasoning_tokens", 0)
 
             # Create enhanced solution
             enhanced_agent_solution = AgentSolution(
                 agent_id=f"enhanced_{original_solution.agent_id}",
                 solution=enhanced_solution_text,
-                confidence=min(original_solution.confidence + 0.1, 1.0),  # Slight confidence boost
+                confidence=min(
+                    original_solution.confidence + 0.1, 1.0
+                ),  # Slight confidence boost
                 reasoning_tokens=reasoning_tokens,
                 total_tokens=total_tokens,
                 solution_length=len(enhanced_solution_text),
-                temperature=original_solution.temperature
+                temperature=original_solution.temperature,
             )
 
-            logger.info(f"Generated strategy-enhanced solution for agent {original_solution.agent_id}")
+            logger.info(
+                f"Generated strategy-enhanced solution for agent {original_solution.agent_id}"
+            )
             return enhanced_agent_solution
 
         except Exception as e:
-            logger.error(f"Strategy enhancement failed for agent {original_solution.agent_id}: {str(e)}")
+            logger.error(
+                f"Strategy enhancement failed for agent {original_solution.agent_id}: {str(e)}"
+            )
             return None
 
     def update_strategy_effectiveness(
@@ -537,15 +610,14 @@ Enhanced Solution:"""
         strategy_id: str,
         problem_type: str,
         was_successful: bool,
-        confidence: float
+        confidence: float,
     ):
         """Update effectiveness tracking for a strategy"""
         key = (strategy_id, problem_type)
 
         if key not in self.strategy_effectiveness:
             self.strategy_effectiveness[key] = StrategyEffectiveness(
-                strategy_id=strategy_id,
-                problem_type=problem_type
+                strategy_id=strategy_id, problem_type=problem_type
             )
 
         effectiveness = self.strategy_effectiveness[key]
@@ -558,18 +630,18 @@ Enhanced Solution:"""
 
         # Update average confidence
         effectiveness.average_confidence = (
-            (effectiveness.average_confidence * (effectiveness.total_uses - 1) + confidence) /
-            effectiveness.total_uses
-        )
+            effectiveness.average_confidence * (effectiveness.total_uses - 1)
+            + confidence
+        ) / effectiveness.total_uses
 
     def get_strategy_insights_summary(self) -> Dict[str, Any]:
         """Get summary of strategy network insights"""
         return {
-            'total_strategies': len(self.strategies),
-            'strategies_by_type': self._count_strategies_by_type(),
-            'most_effective_strategies': self._get_most_effective_strategies(),
-            'agent_strategy_preferences': dict(self.agent_preferred_strategies),
-            'strategy_effectiveness_stats': self._get_effectiveness_stats()
+            "total_strategies": len(self.strategies),
+            "strategies_by_type": self._count_strategies_by_type(),
+            "most_effective_strategies": self._get_most_effective_strategies(),
+            "agent_strategy_preferences": dict(self.agent_preferred_strategies),
+            "strategy_effectiveness_stats": self._get_effectiveness_stats(),
         }
 
     def _count_strategies_by_type(self) -> Dict[str, int]:
@@ -584,19 +656,22 @@ Enhanced Solution:"""
         effective_strategies = []
 
         for effectiveness in self.strategy_effectiveness.values():
-            if effectiveness.total_uses >= 2:  # Only consider strategies used multiple times
-                effective_strategies.append({
-                    'strategy_id': effectiveness.strategy_id,
-                    'problem_type': effectiveness.problem_type,
-                    'success_rate': effectiveness.success_rate,
-                    'average_confidence': effectiveness.average_confidence,
-                    'total_uses': effectiveness.total_uses
-                })
+            if (
+                effectiveness.total_uses >= 2
+            ):  # Only consider strategies used multiple times
+                effective_strategies.append(
+                    {
+                        "strategy_id": effectiveness.strategy_id,
+                        "problem_type": effectiveness.problem_type,
+                        "success_rate": effectiveness.success_rate,
+                        "average_confidence": effectiveness.average_confidence,
+                        "total_uses": effectiveness.total_uses,
+                    }
+                )
 
         # Sort by success rate and confidence
         effective_strategies.sort(
-            key=lambda x: (x['success_rate'], x['average_confidence']),
-            reverse=True
+            key=lambda x: (x["success_rate"], x["average_confidence"]), reverse=True
         )
 
         return effective_strategies[:5]  # Top 5
@@ -606,11 +681,21 @@ Enhanced Solution:"""
         if not self.strategy_effectiveness:
             return {}
 
-        success_rates = [eff.success_rate for eff in self.strategy_effectiveness.values()]
-        avg_confidences = [eff.average_confidence for eff in self.strategy_effectiveness.values()]
+        success_rates = [
+            eff.success_rate for eff in self.strategy_effectiveness.values()
+        ]
+        avg_confidences = [
+            eff.average_confidence for eff in self.strategy_effectiveness.values()
+        ]
 
         return {
-            'average_success_rate': sum(success_rates) / len(success_rates) if success_rates else 0,
-            'average_confidence': sum(avg_confidences) / len(avg_confidences) if avg_confidences else 0,
-            'total_strategy_applications': sum(eff.total_uses for eff in self.strategy_effectiveness.values())
+            "average_success_rate": (
+                sum(success_rates) / len(success_rates) if success_rates else 0
+            ),
+            "average_confidence": (
+                sum(avg_confidences) / len(avg_confidences) if avg_confidences else 0
+            ),
+            "total_strategy_applications": sum(
+                eff.total_uses for eff in self.strategy_effectiveness.values()
+            ),
         }

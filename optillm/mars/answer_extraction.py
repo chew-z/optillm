@@ -9,7 +9,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def extract_clean_answer(text: str, mode: str = 'auto') -> str:
+def extract_clean_answer(text: str, mode: str = "auto") -> str:
     """
     Extract clean final answer from MARS synthesis text
 
@@ -20,16 +20,16 @@ def extract_clean_answer(text: str, mode: str = 'auto') -> str:
     Returns:
         Clean final answer without intermediate reasoning
     """
-    if mode == 'none':
+    if mode == "none":
         return text
 
     # Auto-detect mode if not specified
-    if mode == 'auto':
+    if mode == "auto":
         mode = detect_answer_type(text)
 
-    if mode == 'code':
+    if mode == "code":
         return extract_code_answer(text)
-    elif mode == 'math':
+    elif mode == "math":
         return extract_math_answer(text)
     else:
         return extract_generic_answer(text)
@@ -38,19 +38,19 @@ def extract_clean_answer(text: str, mode: str = 'auto') -> str:
 def detect_answer_type(text: str) -> str:
     """Detect whether this is a code, math, or generic problem"""
     # Check for code indicators
-    code_indicators = ['```', 'def ', 'import ', 'class ', 'return ', 'for ', 'while ']
+    code_indicators = ["```", "def ", "import ", "class ", "return ", "for ", "while "]
     has_code = any(indicator in text for indicator in code_indicators)
 
     # Check for math indicators
-    math_indicators = ['\\boxed', '\\frac', '\\sum', '\\int', '$$', '$\\']
+    math_indicators = ["\\boxed", "\\frac", "\\sum", "\\int", "$$", "$\\"]
     has_math = any(indicator in text for indicator in math_indicators)
 
     if has_code:
-        return 'code'
+        return "code"
     elif has_math:
-        return 'math'
+        return "math"
     else:
-        return 'generic'
+        return "generic"
 
 
 def extract_code_answer(text: str) -> str:
@@ -59,26 +59,38 @@ def extract_code_answer(text: str) -> str:
     Finds the last complete code block as the final answer
     """
     # Try to find code blocks with language specifier
-    code_blocks = re.findall(r'```(?:python|cpp|java|javascript|go|rust)?\n(.*?)\n```', text, re.DOTALL)
+    code_blocks = re.findall(
+        r"```(?:python|cpp|java|javascript|go|rust)?\n(.*?)\n```", text, re.DOTALL
+    )
 
     if code_blocks:
         # Return last code block (most likely the final solution)
         final_code = code_blocks[-1].strip()
-        logger.info(f"📝 EXTRACTION: Found {len(code_blocks)} code blocks, using last one ({len(final_code)} chars)")
+        logger.info(
+            f"📝 EXTRACTION: Found {len(code_blocks)} code blocks, using last one ({len(final_code)} chars)"
+        )
         return f"```python\n{final_code}\n```"
 
     # Fallback: Look for code after common section headers
-    sections = re.split(r'\n#+\s+(?:Final Solution|Solution|Implementation|Code)\s*\n', text, flags=re.IGNORECASE)
+    sections = re.split(
+        r"\n#+\s+(?:Final Solution|Solution|Implementation|Code)\s*\n",
+        text,
+        flags=re.IGNORECASE,
+    )
     if len(sections) > 1:
         final_section = sections[-1].strip()
-        logger.info(f"📝 EXTRACTION: Using code from final section ({len(final_section)} chars)")
+        logger.info(
+            f"📝 EXTRACTION: Using code from final section ({len(final_section)} chars)"
+        )
         return final_section
 
     # Last resort: Return text after last heading
-    parts = text.split('###')
+    parts = text.split("###")
     if len(parts) > 1:
         final_part = parts[-1].strip()
-        logger.info(f"📝 EXTRACTION: Using text after last heading ({len(final_part)} chars)")
+        logger.info(
+            f"📝 EXTRACTION: Using text after last heading ({len(final_part)} chars)"
+        )
         return final_part
 
     logger.warning("⚠️  EXTRACTION: No clear code found, returning full text")
@@ -91,30 +103,34 @@ def extract_math_answer(text: str) -> str:
     Finds the last \\boxed{} answer as the final answer
     """
     # Find all boxed answers
-    boxed_answers = re.findall(r'\\boxed\{([^}]+)\}', text)
+    boxed_answers = re.findall(r"\\boxed\{([^}]+)\}", text)
 
     if boxed_answers:
         # Return last boxed answer (most likely the final one)
         final_answer = boxed_answers[-1]
-        logger.info(f"📝 EXTRACTION: Found {len(boxed_answers)} boxed answers, using last one: {final_answer}")
+        logger.info(
+            f"📝 EXTRACTION: Found {len(boxed_answers)} boxed answers, using last one: {final_answer}"
+        )
         return f"The final answer is $\\boxed{{{final_answer}}}$"
 
     # Fallback: Look for "final answer" or similar phrases
     final_patterns = [
-        r'[Ff]inal answer[:\s]+(.+?)(?:\n|$)',
-        r'[Tt]he answer is[:\s]+(.+?)(?:\n|$)',
-        r'[Tt]herefore[,\s]+(.+?)(?:\n|$)',
+        r"[Ff]inal answer[:\s]+(.+?)(?:\n|$)",
+        r"[Tt]he answer is[:\s]+(.+?)(?:\n|$)",
+        r"[Tt]herefore[,\s]+(.+?)(?:\n|$)",
     ]
 
     for pattern in final_patterns:
         matches = re.findall(pattern, text)
         if matches:
             final_answer = matches[-1].strip()
-            logger.info(f"📝 EXTRACTION: Found answer via pattern '{pattern}': {final_answer}")
+            logger.info(
+                f"📝 EXTRACTION: Found answer via pattern '{pattern}': {final_answer}"
+            )
             return final_answer
 
     # Last resort: Return last paragraph
-    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if paragraphs:
         final_para = paragraphs[-1]
         logger.info(f"📝 EXTRACTION: Using last paragraph ({len(final_para)} chars)")
@@ -131,18 +147,25 @@ def extract_generic_answer(text: str) -> str:
     For proof-based problems, may return the full text if no clear answer section exists
     """
     # Check if this looks like a proof problem (geometry, proofs, etc.)
-    proof_indicators = ['proof', 'QED', 'proven', 'demonstrate', 'show that', 'prove that']
+    proof_indicators = [
+        "proof",
+        "QED",
+        "proven",
+        "demonstrate",
+        "show that",
+        "prove that",
+    ]
     is_proof = any(indicator.lower() in text.lower() for indicator in proof_indicators)
 
     # Try to find conclusion markers
     conclusion_markers = [
-        'In conclusion',
-        'Therefore',
-        'Thus',
-        'Hence',
-        'Finally',
-        'The answer is',
-        'The final answer',
+        "In conclusion",
+        "Therefore",
+        "Thus",
+        "Hence",
+        "Finally",
+        "The answer is",
+        "The final answer",
     ]
 
     for marker in conclusion_markers:
@@ -152,23 +175,29 @@ def extract_generic_answer(text: str) -> str:
             if len(parts) > 1:
                 answer = parts[1].strip()
                 # Get first sentence/paragraph after marker
-                first_para = answer.split('\n\n')[0].strip()
+                first_para = answer.split("\n\n")[0].strip()
                 if len(first_para) > 20:  # Ensure it's substantial
-                    logger.info(f"📝 EXTRACTION: Found answer after '{marker}' ({len(first_para)} chars)")
+                    logger.info(
+                        f"📝 EXTRACTION: Found answer after '{marker}' ({len(first_para)} chars)"
+                    )
                     return first_para
 
     # For proof problems, return more context (last 2-3 paragraphs or full text if short)
-    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
 
     if is_proof and paragraphs:
         # For proofs, include conclusion paragraphs (last 2-3 paragraphs)
         if len(paragraphs) >= 3:
-            conclusion_text = '\n\n'.join(paragraphs[-3:])
-            logger.info(f"📝 EXTRACTION: Proof detected, using last 3 paragraphs ({len(conclusion_text)} chars)")
+            conclusion_text = "\n\n".join(paragraphs[-3:])
+            logger.info(
+                f"📝 EXTRACTION: Proof detected, using last 3 paragraphs ({len(conclusion_text)} chars)"
+            )
             return conclusion_text
         else:
             # Short proof, return full text
-            logger.info(f"📝 EXTRACTION: Short proof detected, returning full text ({len(text)} chars)")
+            logger.info(
+                f"📝 EXTRACTION: Short proof detected, returning full text ({len(text)} chars)"
+            )
             return text
 
     # For non-proof problems, return last paragraph
@@ -178,9 +207,9 @@ def extract_generic_answer(text: str) -> str:
         return final_para
 
     # Last resort: Return last sentence
-    sentences = [s.strip() for s in text.split('.') if s.strip()]
+    sentences = [s.strip() for s in text.split(".") if s.strip()]
     if sentences:
-        final_sentence = sentences[-1] + '.'
+        final_sentence = sentences[-1] + "."
         logger.info(f"📝 EXTRACTION: Using last sentence ({len(final_sentence)} chars)")
         return final_sentence
 
@@ -213,7 +242,7 @@ def strip_thinking_tags(text: str) -> str:
         Text with thinking tags removed
     """
     # Remove thinking tags and content
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     return text.strip()
 
 
@@ -227,7 +256,7 @@ def get_answer_after_thinking(text: str) -> str:
     Returns:
         Content after </think> tag, or full text if no tags
     """
-    match = re.search(r'</think>\s*(.+)', text, re.DOTALL)
+    match = re.search(r"</think>\s*(.+)", text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return text

@@ -9,13 +9,14 @@ import os
 import logging
 import re
 import time
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict
 from datetime import datetime
 from openai import OpenAI
 from tqdm import tqdm
 
 # Add sys path to import optillm modules
 import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from optillm.utils.answer_extraction import extract_answer
 
@@ -29,7 +30,7 @@ client = OpenAI(api_key="optillm", base_url="http://localhost:8001/v1")
 # Import the actual IMO 2025 problems and reference solutions
 from imo25_reference import IMO_2025_PROBLEMS, verify_answer_format, verify_key_insights
 
-SYSTEM_PROMPT = '''You are solving IMO (International Mathematical Olympiad) problems - the most challenging mathematical competition problems for high school students.
+SYSTEM_PROMPT = """You are solving IMO (International Mathematical Olympiad) problems - the most challenging mathematical competition problems for high school students.
 
 Key requirements:
 1. **Complete proofs**: Provide rigorous, step-by-step mathematical proofs
@@ -47,7 +48,8 @@ For combinatorics: Use counting techniques, pigeonhole principle, and extremal a
 
 Always conclude with a clear statement of your final answer.
 
-For problems with specific answers, put your final answer in \boxed{} format.'''
+For problems with specific answers, put your final answer in \boxed{} format."""
+
 
 def extract_final_answer(solution: str, problem_id: int) -> Dict[str, any]:
     """
@@ -62,7 +64,7 @@ def extract_final_answer(solution: str, problem_id: int) -> Dict[str, any]:
         "confidence": 0.0,
         "extraction_method": None,
         "official_answer_found": official_verification["correct_answer_found"],
-        "official_answer_score": official_verification["answer_score"]
+        "official_answer_score": official_verification["answer_score"],
     }
 
     if not solution:
@@ -76,7 +78,7 @@ def extract_final_answer(solution: str, problem_id: int) -> Dict[str, any]:
         return result
 
     # Look for boxed answers first
-    boxed_pattern = r'\\boxed\{([^}]+)\}'
+    boxed_pattern = r"\\boxed\{([^}]+)\}"
     boxed_matches = re.findall(boxed_pattern, solution)
     if boxed_matches:
         result["extracted_answer"] = boxed_matches[-1].strip()  # Take the last one
@@ -86,10 +88,10 @@ def extract_final_answer(solution: str, problem_id: int) -> Dict[str, any]:
 
     # Look for "final answer" or "answer:" sections
     answer_patterns = [
-        r'final answer[:\s]*([^\n]+)',
-        r'answer[:\s]*([^\n]+)',
-        r'therefore[:\s]*([^\n]+)',
-        r'thus[:\s]*([^\n]+)'
+        r"final answer[:\s]*([^\n]+)",
+        r"answer[:\s]*([^\n]+)",
+        r"therefore[:\s]*([^\n]+)",
+        r"thus[:\s]*([^\n]+)",
     ]
 
     solution_lower = solution.lower()
@@ -110,9 +112,7 @@ def extract_answer_from_solution(solution: str, problem_id: int) -> str:
     """
     # Use unified answer extraction with IMO problem context
     extracted_answer = extract_answer(
-        solution,
-        problem_type="imo",
-        problem_id=problem_id
+        solution, problem_type="imo", problem_id=problem_id
     )
 
     if extracted_answer is None:
@@ -170,7 +170,7 @@ def check_answer_correctness(problem_id: int, extracted_answer: str) -> bool:
         3: ["c = 4"],
         4: ["6", "18", "6, 18"],  # Either 6 or 18 or both
         5: ["λ < 1", "λ < √2/2"],  # Both are correct since √2/2 < 1
-        6: ["4048"]
+        6: ["4048"],
     }
 
     if problem_id not in golden_answers:
@@ -204,7 +204,9 @@ def check_answer_correctness(problem_id: int, extracted_answer: str) -> bool:
     return False
 
 
-def imo25_verify_solution(problem: str, solution: str, model: str, problem_id: int = None) -> Dict[str, any]:
+def imo25_verify_solution(
+    problem: str, solution: str, model: str, problem_id: int = None
+) -> Dict[str, any]:
     """
     Two-stage verification system from IMO25 repository:
     Stage 1: Detailed verification using comprehensive IMO grader prompt
@@ -286,7 +288,9 @@ Your task is to act as an IMO grader. Now, generate the **summary** and the **st
     if problem_id is not None:
         extracted_answer = extract_answer_from_solution(solution, problem_id)
         answer_is_correct = check_answer_correctness(problem_id, extracted_answer)
-        logger.info(f"Problem {problem_id}: Extracted answer = '{extracted_answer}', Correct = {answer_is_correct}")
+        logger.info(
+            f"Problem {problem_id}: Extracted answer = '{extracted_answer}', Correct = {answer_is_correct}"
+        )
 
     try:
         # Stage 1: Detailed verification
@@ -294,10 +298,10 @@ Your task is to act as an IMO grader. Now, generate the **summary** and the **st
             model=model,
             messages=[
                 {"role": "system", "content": verification_system_prompt},
-                {"role": "user", "content": verification_prompt}
+                {"role": "user", "content": verification_prompt},
             ],
             max_tokens=64000,
-            temperature=0.1
+            temperature=0.1,
         )
 
         verification_response = response.choices[0].message.content.strip()
@@ -318,11 +322,9 @@ Is the overall mathematical approach reasonable and the final answer correct, ev
 
         response2 = client.with_options(timeout=300).chat.completions.create(
             model=model,
-            messages=[
-                {"role": "user", "content": check_correctness_prompt}
-            ],
+            messages=[{"role": "user", "content": check_correctness_prompt}],
             max_tokens=10,
-            temperature=0.1
+            temperature=0.1,
         )
 
         correctness_check = response2.choices[0].message.content.strip().lower()
@@ -333,7 +335,9 @@ Is the overall mathematical approach reasonable and the final answer correct, ev
             is_correct = True  # Both answer and verification are correct
         elif answer_is_correct and not verification_says_correct:
             is_correct = True  # Answer is correct, trust that over verification
-            logger.info(f"Problem {problem_id}: Answer correct but verification strict - accepting solution")
+            logger.info(
+                f"Problem {problem_id}: Answer correct but verification strict - accepting solution"
+            )
         else:
             is_correct = verification_says_correct  # Fall back to verification result
 
@@ -341,7 +345,11 @@ Is the overall mathematical approach reasonable and the final answer correct, ev
         bug_report = ""
         if not is_correct:
             # Try to extract the detailed verification log
-            verification_log_match = re.search(r'### Detailed Verification Log ###\s*(.*)', verification_response, re.DOTALL)
+            verification_log_match = re.search(
+                r"### Detailed Verification Log ###\s*(.*)",
+                verification_response,
+                re.DOTALL,
+            )
             if verification_log_match:
                 bug_report = verification_log_match.group(1).strip()
             else:
@@ -363,7 +371,9 @@ Is the overall mathematical approach reasonable and the final answer correct, ev
             "extracted_answer": extracted_answer,
             "answer_is_correct": answer_is_correct,
             "verification_says_correct": verification_says_correct,
-            "verification_method": "hybrid_answer_aware" if problem_id else "original_imo25"
+            "verification_method": (
+                "hybrid_answer_aware" if problem_id else "original_imo25"
+            ),
         }
 
     except Exception as e:
@@ -379,11 +389,13 @@ Is the overall mathematical approach reasonable and the final answer correct, ev
             "errors_found": [f"Judge error: {str(e)}"],
             "overall_assessment": "error",
             "judge_reasoning": "",
-            "success": False
+            "success": False,
         }
 
 
-def verify_problem_specific_insights(problem_data: Dict, solution: str) -> Dict[str, any]:
+def verify_problem_specific_insights(
+    problem_data: Dict, solution: str
+) -> Dict[str, any]:
     """
     Check for problem-specific insights using our enhanced verification system
     """
@@ -397,7 +409,7 @@ def verify_problem_specific_insights(problem_data: Dict, solution: str) -> Dict[
         "total_required_insights": insight_verification["total_insights"],
         "specific_insights": insight_verification["insights_found"],
         "missing_insights": insight_verification["insights_missing"],
-        "insight_score": insight_verification["insight_score"]
+        "insight_score": insight_verification["insight_score"],
     }
 
 
@@ -413,7 +425,7 @@ def extract_solution_quality(response: str) -> Dict[str, any]:
         "has_conclusion": False,
         "length_score": 0,
         "rigor_indicators": [],
-        "completeness_score": 0
+        "completeness_score": 0,
     }
 
     if not response:
@@ -422,19 +434,46 @@ def extract_solution_quality(response: str) -> Dict[str, any]:
     response_lower = response.lower()
 
     # Check for proof structure
-    proof_keywords = ["proof:", "solution:", "we prove", "to show", "suppose", "assume", "let", "consider"]
+    proof_keywords = [
+        "proof:",
+        "solution:",
+        "we prove",
+        "to show",
+        "suppose",
+        "assume",
+        "let",
+        "consider",
+    ]
     if any(keyword in response_lower for keyword in proof_keywords):
         analysis["has_proof_structure"] = True
         analysis["rigor_indicators"].append("proof_structure")
 
     # Check for mathematical notation
-    math_patterns = [r'\$.*\$', r'\\[a-zA-Z]+', r'\\geq', r'\\leq', r'\\in', r'\\mathbb', r'\\sum', r'\\prod']
+    math_patterns = [
+        r"\$.*\$",
+        r"\\[a-zA-Z]+",
+        r"\\geq",
+        r"\\leq",
+        r"\\in",
+        r"\\mathbb",
+        r"\\sum",
+        r"\\prod",
+    ]
     if any(re.search(pattern, response) for pattern in math_patterns):
         analysis["uses_mathematical_notation"] = True
         analysis["rigor_indicators"].append("mathematical_notation")
 
     # Check for logical flow
-    logical_words = ["therefore", "thus", "hence", "consequently", "since", "because", "implies", "follows"]
+    logical_words = [
+        "therefore",
+        "thus",
+        "hence",
+        "consequently",
+        "since",
+        "because",
+        "implies",
+        "follows",
+    ]
     logical_count = sum(1 for word in logical_words if word in response_lower)
     if logical_count >= 3:
         analysis["has_logical_steps"] = True
@@ -448,7 +487,15 @@ def extract_solution_quality(response: str) -> Dict[str, any]:
         analysis["rigor_indicators"].append("case_analysis")
 
     # Check for conclusion
-    conclusion_words = ["conclude", "final answer", "solution is", "answer:", "qed", "proven", "shown"]
+    conclusion_words = [
+        "conclude",
+        "final answer",
+        "solution is",
+        "answer:",
+        "qed",
+        "proven",
+        "shown",
+    ]
     if any(word in response_lower for word in conclusion_words):
         analysis["has_conclusion"] = True
         analysis["rigor_indicators"].append("clear_conclusion")
@@ -470,13 +517,18 @@ def extract_solution_quality(response: str) -> Dict[str, any]:
         analysis["uses_mathematical_notation"],
         analysis["has_logical_steps"],
         analysis["addresses_all_cases"],
-        analysis["has_conclusion"]
+        analysis["has_conclusion"],
     ]
-    analysis["completeness_score"] = sum(completeness_factors) / len(completeness_factors)
+    analysis["completeness_score"] = sum(completeness_factors) / len(
+        completeness_factors
+    )
 
     return analysis
 
-def get_llm_response(problem: str, model: str, extra_body: dict = None, timeout: int = 600) -> Dict[str, any]:
+
+def get_llm_response(
+    problem: str, model: str, extra_body: dict = None, timeout: int = 600
+) -> Dict[str, any]:
     """
     Get response from the LLM for an IMO problem with extended timeout for complex reasoning
     """
@@ -489,21 +541,25 @@ def get_llm_response(problem: str, model: str, extra_body: dict = None, timeout:
             model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": problem}
+                {"role": "user", "content": problem},
             ],
             max_tokens=64000,  # Extended token limit for complex IMO proofs (increased from 30000)
-            **kwargs
+            **kwargs,
         )
 
         solution_text = response.choices[0].message.content.strip()
-        reasoning_tokens = getattr(response.usage, 'reasoning_tokens', 0)
-        total_tokens = response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 0
+        reasoning_tokens = getattr(response.usage, "reasoning_tokens", 0)
+        total_tokens = (
+            response.usage.total_tokens
+            if hasattr(response.usage, "total_tokens")
+            else 0
+        )
 
         return {
             "solution": solution_text,
             "reasoning_tokens": reasoning_tokens,
             "total_tokens": total_tokens,
-            "success": True
+            "success": True,
         }
 
     except Exception as e:
@@ -512,10 +568,13 @@ def get_llm_response(problem: str, model: str, extra_body: dict = None, timeout:
             "solution": f"Error generating solution: {str(e)}",
             "reasoning_tokens": 0,
             "total_tokens": 0,
-            "success": False
+            "success": False,
         }
 
-def evaluate_solution(problem_data: Dict, solution: str, model: str = "google/gemini-2.5-flash-lite") -> Dict[str, any]:
+
+def evaluate_solution(
+    problem_data: Dict, solution: str, model: str = "google/gemini-2.5-flash-lite"
+) -> Dict[str, any]:
     """
     IMO25-style evaluation using rigorous two-stage verification system:
     1. Detailed verification with comprehensive IMO grader prompt
@@ -526,7 +585,9 @@ def evaluate_solution(problem_data: Dict, solution: str, model: str = "google/ge
     logger.info(f"Running IMO25-style evaluation for problem {problem_data['id']}")
 
     # Use IMO25's rigorous two-stage verification with enhanced answer checking
-    imo25_verification = imo25_verify_solution(problem_data["problem"], solution, model, problem_data["id"])
+    imo25_verification = imo25_verify_solution(
+        problem_data["problem"], solution, model, problem_data["id"]
+    )
 
     # Extract answer for compatibility with existing code
     answer_extraction = extract_final_answer(solution, problem_data["id"])
@@ -538,7 +599,10 @@ def evaluate_solution(problem_data: Dict, solution: str, model: str = "google/ge
     correctness_score = 1.0 if imo25_verification["is_correct"] else 0.0
 
     # Confidence based on verification success and quality
-    if imo25_verification["is_correct"] and quality_analysis["completeness_score"] > 0.7:
+    if (
+        imo25_verification["is_correct"]
+        and quality_analysis["completeness_score"] > 0.7
+    ):
         confidence = "high"
     elif imo25_verification["is_correct"]:
         confidence = "medium"
@@ -549,68 +613,68 @@ def evaluate_solution(problem_data: Dict, solution: str, model: str = "google/ge
         # Primary binary result - this is what matters
         "is_correct": imo25_verification["is_correct"],
         "verdict": "Correct" if imo25_verification["is_correct"] else "Incorrect",
-
         # For compatibility with existing analysis code
         "correctness_score": correctness_score,
         "is_likely_correct": imo25_verification["is_correct"],
         "confidence": confidence,
-
         # Verification details for transparency
         "verification_details": {
             "stage1_analysis": imo25_verification["judge_response"],
             "stage2_check": imo25_verification["correctness_check"],
             "errors_found": imo25_verification["errors_found"],
-            "bug_report": imo25_verification["bug_report"] if imo25_verification["bug_report"] else None
+            "bug_report": (
+                imo25_verification["bug_report"]
+                if imo25_verification["bug_report"]
+                else None
+            ),
         },
-
         # Legacy compatibility for existing analysis code
         "layer_scores": {
             "structural_quality": quality_analysis["completeness_score"],
             "insights_verification": 1.0 if imo25_verification["is_correct"] else 0.0,
             "llm_judge": correctness_score,
-            "answer_extraction": answer_extraction["confidence"]
+            "answer_extraction": answer_extraction["confidence"],
         },
-        "weights_used": {
-            "imo25_verification": 1.0  # Single source of truth
-        },
+        "weights_used": {"imo25_verification": 1.0},  # Single source of truth
         "score_variance": 0.0,  # No variance in binary assessment
-
         # Simplified component results
         "quality_analysis": quality_analysis,
         "insights_check": {
             "required_insights_found": 1 if imo25_verification["is_correct"] else 0,
             "total_required_insights": 1,
-            "insight_score": 1.0 if imo25_verification["is_correct"] else 0.0
+            "insight_score": 1.0 if imo25_verification["is_correct"] else 0.0,
         },
         "llm_verification": imo25_verification,
         "answer_extraction": answer_extraction,
-
         # Method identifier
-        "evaluation_method": "imo25_two_stage_binary"
+        "evaluation_method": "imo25_two_stage_binary",
     }
+
 
 def save_result(filename: str, result: Dict):
     """Save a single result to the results file."""
     results = []
     if os.path.exists(filename):
         try:
-            with open(filename, 'r') as f:
+            with open(filename, "r") as f:
                 results = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             results = []
 
     results.append(result)
 
-    with open(filename, 'w') as f:
+    with open(filename, "w") as f:
         json.dump(results, f, indent=2)
+
 
 def load_existing_results(filename: str) -> List[Dict]:
     """Load existing results from file if it exists."""
     try:
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             return json.load(f)
     except FileNotFoundError:
         return []
+
 
 def analyze_results(results: List[Dict], approach_name: str = None):
     """Analyze and print comprehensive statistics of IMO evaluation results"""
@@ -619,90 +683,130 @@ def analyze_results(results: List[Dict], approach_name: str = None):
         return
 
     total_problems = len(results)
-    likely_correct = sum(1 for r in results if r['evaluation']['is_correct'])
-    high_confidence = sum(1 for r in results if r['evaluation']['confidence'] == 'high')
+    likely_correct = sum(1 for r in results if r["evaluation"]["is_correct"])
+    high_confidence = sum(1 for r in results if r["evaluation"]["confidence"] == "high")
 
-    avg_correctness = sum(r['evaluation']['correctness_score'] for r in results) / total_problems
-    avg_completeness = sum(r['evaluation']['quality_analysis']['completeness_score'] for r in results) / total_problems
+    avg_correctness = (
+        sum(r["evaluation"]["correctness_score"] for r in results) / total_problems
+    )
+    avg_completeness = (
+        sum(r["evaluation"]["quality_analysis"]["completeness_score"] for r in results)
+        / total_problems
+    )
 
-    total_reasoning_tokens = sum(r['response']['reasoning_tokens'] for r in results)
+    total_reasoning_tokens = sum(r["response"]["reasoning_tokens"] for r in results)
     avg_reasoning_tokens = total_reasoning_tokens / total_problems
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(f"IMO 2025 Evaluation Results - {approach_name or 'Baseline'}")
-    print("="*80)
+    print("=" * 80)
     print(f"Total problems attempted: {total_problems}")
-    print(f"Likely correct solutions: {likely_correct} ({likely_correct/total_problems:.1%})")
-    print(f"High confidence solutions: {high_confidence} ({high_confidence/total_problems:.1%})")
+    print(
+        f"Likely correct solutions: {likely_correct} ({likely_correct/total_problems:.1%})"
+    )
+    print(
+        f"High confidence solutions: {high_confidence} ({high_confidence/total_problems:.1%})"
+    )
     print(f"Average correctness score: {avg_correctness:.3f}")
     print(f"Average completeness score: {avg_completeness:.3f}")
     print(f"Total reasoning tokens used: {total_reasoning_tokens:,}")
     print(f"Average reasoning tokens per problem: {avg_reasoning_tokens:.0f}")
 
     # Problem type breakdown
-    print(f"\nProblem Type Breakdown:")
+    print("\nProblem Type Breakdown:")
     type_stats = {}
     for result in results:
-        prob_type = result['problem_data']['type']
+        prob_type = result["problem_data"]["type"]
         if prob_type not in type_stats:
-            type_stats[prob_type] = {'total': 0, 'correct': 0, 'scores': []}
-        type_stats[prob_type]['total'] += 1
-        if result['evaluation']['is_correct']:
-            type_stats[prob_type]['correct'] += 1
-        type_stats[prob_type]['scores'].append(result['evaluation']['correctness_score'])
+            type_stats[prob_type] = {"total": 0, "correct": 0, "scores": []}
+        type_stats[prob_type]["total"] += 1
+        if result["evaluation"]["is_correct"]:
+            type_stats[prob_type]["correct"] += 1
+        type_stats[prob_type]["scores"].append(
+            result["evaluation"]["correctness_score"]
+        )
 
     for prob_type, stats in type_stats.items():
-        accuracy = stats['correct'] / stats['total']
-        avg_score = sum(stats['scores']) / len(stats['scores'])
-        print(f"  {prob_type}: {stats['correct']}/{stats['total']} ({accuracy:.1%}) - Avg score: {avg_score:.3f}")
+        accuracy = stats["correct"] / stats["total"]
+        avg_score = sum(stats["scores"]) / len(stats["scores"])
+        print(
+            f"  {prob_type}: {stats['correct']}/{stats['total']} ({accuracy:.1%}) - Avg score: {avg_score:.3f}"
+        )
 
     # Detailed problem results
-    print(f"\nDetailed Results:")
+    print("\nDetailed Results:")
     print("-" * 80)
     for result in results:
-        prob_id = result['problem_data']['id']
-        prob_type = result['problem_data']['type']
-        tokens = result['response']['reasoning_tokens']
-        is_correct = result['evaluation']['is_correct']
-        verdict = result['evaluation']['verdict']
+        prob_id = result["problem_data"]["id"]
+        prob_type = result["problem_data"]["type"]
+        tokens = result["response"]["reasoning_tokens"]
+        is_correct = result["evaluation"]["is_correct"]
+        verdict = result["evaluation"]["verdict"]
         status = "✓" if is_correct else "✗"
-        print(f"Problem {prob_id} ({prob_type}): {status} {verdict} - {tokens:,} tokens")
+        print(
+            f"Problem {prob_id} ({prob_type}): {status} {verdict} - {tokens:,} tokens"
+        )
 
     # Quality analysis summary
-    print(f"\nSolution Quality Analysis:")
+    print("\nSolution Quality Analysis:")
     print("-" * 40)
     quality_metrics = [
-        "has_proof_structure", "uses_mathematical_notation", "has_logical_steps",
-        "addresses_all_cases", "has_conclusion"
+        "has_proof_structure",
+        "uses_mathematical_notation",
+        "has_logical_steps",
+        "addresses_all_cases",
+        "has_conclusion",
     ]
 
     for metric in quality_metrics:
-        count = sum(1 for r in results if r['evaluation']['quality_analysis'][metric])
+        count = sum(1 for r in results if r["evaluation"]["quality_analysis"][metric])
         percentage = count / total_problems
-        print(f"{metric.replace('_', ' ').title()}: {count}/{total_problems} ({percentage:.1%})")
+        print(
+            f"{metric.replace('_', ' ').title()}: {count}/{total_problems} ({percentage:.1%})"
+        )
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate LLM performance on IMO 2025 problems")
-    parser.add_argument("--model", type=str, required=True,
-                       help="Model to use (e.g., google/gemma-2.5-flash-lite)")
-    parser.add_argument("--approach", type=str, default="none",
-                       help="OptiLLM approach to use (none, mars, moa, bon, etc.)")
-    parser.add_argument("--timeout", type=int, default=600,
-                       help="Timeout in seconds for each problem (default: 600)")
-    parser.add_argument("--problems", type=str,
-                       help="Comma-separated list of problem IDs to evaluate (e.g., '1,3,5')")
+    parser = argparse.ArgumentParser(
+        description="Evaluate LLM performance on IMO 2025 problems"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        help="Model to use (e.g., google/gemma-2.5-flash-lite)",
+    )
+    parser.add_argument(
+        "--approach",
+        type=str,
+        default="none",
+        help="OptiLLM approach to use (none, mars, moa, bon, etc.)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="Timeout in seconds for each problem (default: 600)",
+    )
+    parser.add_argument(
+        "--problems",
+        type=str,
+        help="Comma-separated list of problem IDs to evaluate (e.g., '1,3,5')",
+    )
 
     args = parser.parse_args()
 
     # Setup results directory and filename
     os.makedirs("results", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"results/imo25_{args.model.replace('/', '_')}_{args.approach}_{timestamp}.json"
+    results_file = (
+        f"results/imo25_{args.model.replace('/', '_')}_{args.approach}_{timestamp}.json"
+    )
 
     # Determine which problems to evaluate
     if args.problems:
-        problem_ids = [int(x.strip()) for x in args.problems.split(',')]
-        problems_to_evaluate = [p for p in IMO_2025_PROBLEMS if p['id'] in problem_ids]
+        problem_ids = [int(x.strip()) for x in args.problems.split(",")]
+        problems_to_evaluate = [p for p in IMO_2025_PROBLEMS if p["id"] in problem_ids]
     else:
         problems_to_evaluate = IMO_2025_PROBLEMS
 
@@ -718,8 +822,8 @@ def main():
             "optillm_approach": "mars",
             "mars_config": {
                 "use_thinking_tags": False,  # IMO proofs need full visibility to evaluator
-                "answer_extraction_mode": "none"  # Don't extract - proofs ARE the answer
-            }
+                "answer_extraction_mode": "none",  # Don't extract - proofs ARE the answer
+            },
         }
     elif args.approach != "none":
         extra_body = {"optillm_approach": args.approach}
@@ -734,16 +838,13 @@ def main():
 
         # Get LLM response
         response = get_llm_response(
-            problem_data['problem'],
-            args.model,
-            extra_body,
-            args.timeout
+            problem_data["problem"], args.model, extra_body, args.timeout
         )
 
         solve_time = time.time() - start_time
 
         # Evaluate solution quality with enhanced multi-layer approach
-        evaluation = evaluate_solution(problem_data, response['solution'], args.model)
+        evaluation = evaluate_solution(problem_data, response["solution"], args.model)
 
         # Compile result
         result = {
@@ -753,19 +854,22 @@ def main():
             "problem_data": problem_data,
             "response": response,
             "evaluation": evaluation,
-            "solve_time_seconds": solve_time
+            "solve_time_seconds": solve_time,
         }
 
         # Save result immediately
         save_result(results_file, result)
 
-        logger.info(f"Problem {problem_data['id']} completed - Score: {evaluation['correctness_score']:.3f}")
+        logger.info(
+            f"Problem {problem_data['id']} completed - Score: {evaluation['correctness_score']:.3f}"
+        )
 
     # Load all results and analyze
     final_results = load_existing_results(results_file)
     analyze_results(final_results, args.approach)
 
     print(f"\nEvaluation complete! Results saved to: {results_file}")
+
 
 if __name__ == "__main__":
     main()

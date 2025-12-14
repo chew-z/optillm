@@ -19,7 +19,14 @@ from optillm.plugins.spl import run_spl
 # Plugin identifier
 SLUG = "spl"
 
-def run(system_prompt: str, initial_query: str, client, model: str, request_config: dict = None) -> Tuple[str, int]:
+
+def run(
+    system_prompt: str,
+    initial_query: str,
+    client,
+    model: str,
+    request_config: dict = None,
+) -> Tuple[str, int]:
     """
     Plugin entry point for System Prompt Learning.
 

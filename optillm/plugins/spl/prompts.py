@@ -58,4 +58,3 @@ The following strategies can help solve the user's query effectively. Use them a
 
 {strategies_section}
 """
-

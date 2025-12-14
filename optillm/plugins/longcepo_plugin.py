@@ -12,20 +12,21 @@ from typing import Tuple
 
 SLUG = "longcepo"
 
+
 def run(system_prompt: str, initial_query: str, client, model: str) -> Tuple[str, int]:
     # Get the directory where this plugin is located
     plugin_dir = os.path.dirname(os.path.abspath(__file__))
-    longcepo_dir = os.path.join(plugin_dir, 'longcepo')
-    main_file = os.path.join(longcepo_dir, 'main.py')
-    
+    longcepo_dir = os.path.join(plugin_dir, "longcepo")
+    main_file = os.path.join(longcepo_dir, "main.py")
+
     # Load the main module dynamically
     spec = importlib.util.spec_from_file_location("longcepo_main", main_file)
     longcepo_main = importlib.util.module_from_spec(spec)
-    
+
     # Add the longcepo directory to the Python path temporarily
     if longcepo_dir not in sys.path:
         sys.path.insert(0, longcepo_dir)
-    
+
     try:
         spec.loader.exec_module(longcepo_main)
         return longcepo_main.run_longcepo(system_prompt, initial_query, client, model)

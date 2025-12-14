@@ -17,7 +17,12 @@ def get_prompt_length(prompt: str, tokenizer, no_special_tokens=False, **kwargs)
     return len(tokenizer.encode(prompt, **kwargs))
 
 
-def chunk_context(doc: str, chunk_size: int, tokenizer, separator="\n",) -> List[str]:
+def chunk_context(
+    doc: str,
+    chunk_size: int,
+    tokenizer,
+    separator="\n",
+) -> List[str]:
     """
     Splits a long document into token-limited chunks based on a separator, ensuring each chunk fits within `chunk_size`.
 
@@ -122,7 +127,10 @@ def split_sentences(text: str, spliter: str):
 
 
 def split_into_granular_chunks(
-    text: str, chunk_size: int, tokenizer, spliter=r"([。！？；.?!;])",
+    text: str,
+    chunk_size: int,
+    tokenizer,
+    spliter=r"([。！？；.?!;])",
 ) -> List[str]:
     """
     Splits long text into granular, token-length-constrained chunks using sentence boundaries.

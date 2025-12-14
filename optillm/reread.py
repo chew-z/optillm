@@ -1,10 +1,18 @@
 import logging
 import optillm
-from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)
 
-def re2_approach(system_prompt, initial_query, client, model, n=1, request_config: dict = None, request_id: str = None):
+
+def re2_approach(
+    system_prompt,
+    initial_query,
+    client,
+    model,
+    n=1,
+    request_config: dict = None,
+    request_id: str = None,
+):
     """
     Implement the RE2 (Re-Reading) approach for improved reasoning in LLMs.
 
@@ -25,37 +33,43 @@ def re2_approach(system_prompt, initial_query, client, model, n=1, request_confi
     # Extract max_tokens from request_config if provided
     max_tokens = None
     if request_config:
-        max_tokens = request_config.get('max_tokens')
-    
+        max_tokens = request_config.get("max_tokens")
+
     # Construct the RE2 prompt
     re2_prompt = f"{initial_query}\nRead the question again: {initial_query}"
-    
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": re2_prompt}
+        {"role": "user", "content": re2_prompt},
     ]
-    
+
     try:
-        provider_request = {
-            "model": model,
-            "messages": messages,
-            "n": n
-        }
+        provider_request = {"model": model, "messages": messages, "n": n}
         if max_tokens is not None:
             provider_request["max_tokens"] = max_tokens
         response = client.chat.completions.create(**provider_request)
-        
+
         # Log provider call
-        if hasattr(optillm, 'conversation_logger') and optillm.conversation_logger and request_id:
-            response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-            optillm.conversation_logger.log_provider_call(request_id, provider_request, response_dict)
-        
+        if (
+            hasattr(optillm, "conversation_logger")
+            and optillm.conversation_logger
+            and request_id
+        ):
+            response_dict = (
+                response.model_dump() if hasattr(response, "model_dump") else response
+            )
+            optillm.conversation_logger.log_provider_call(
+                request_id, provider_request, response_dict
+            )
+
         re2_completion_tokens += response.usage.completion_tokens
         if n == 1:
             return response.choices[0].message.content.strip(), re2_completion_tokens
         else:
-            return [choice.message.content.strip() for choice in response.choices], re2_completion_tokens
-    
+            return [
+                choice.message.content.strip() for choice in response.choices
+            ], re2_completion_tokens
+
     except Exception as e:
         logger.error(f"Error in RE2 approach: {str(e)}")
         raise

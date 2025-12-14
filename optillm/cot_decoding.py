@@ -1,7 +1,7 @@
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizer
-from typing import List, Tuple, Dict, Optional
-import numpy as np
+from typing import List, Tuple, Dict
+
 
 def get_device():
     if torch.backends.mps.is_available():
@@ -11,14 +11,15 @@ def get_device():
     else:
         return torch.device("cpu")
 
+
 def calculate_confidence(logits: List[torch.Tensor], answer_ids: torch.Tensor) -> float:
     """
     Calculate the confidence score (Δ) as specified in the paper.
-    
+
     Args:
         logits: List of logits for each decoding step
         answer_ids: Tensor of token ids for the answer
-    
+
     Returns:
         Confidence score (Δ)
     """
@@ -38,16 +39,20 @@ def calculate_confidence(logits: List[torch.Tensor], answer_ids: torch.Tensor) -
         else:
             confidence_sum += 1.0  # Max confidence if there's only one token
         valid_tokens += 1
-    
+
     return confidence_sum / valid_tokens if valid_tokens > 0 else 0.0
 
-def aggregate_paths_based_on_scores(paths: List[Tuple[str, float]]) -> Tuple[str, float]:
+
+def aggregate_paths_based_on_scores(
+    paths: List[Tuple[str, float]],
+) -> Tuple[str, float]:
     """Aggregate multiple paths based on their confidence scores."""
     answer_scores = {}
     for answer, delta in paths:
         answer_scores[answer] = answer_scores.get(answer, 0) + delta
     best_answer = max(answer_scores, key=answer_scores.get)
     return best_answer, answer_scores[best_answer]
+
 
 def cot_decode(
     model: PreTrainedModel,
@@ -66,7 +71,7 @@ def cot_decode(
 ) -> Tuple[str, float]:
     """
     Implement CoT-decoding for a given chat input.
-    
+
     Args:
         model: The Hugging Face transformer model.
         tokenizer: The associated tokenizer.
@@ -90,7 +95,9 @@ def cot_decode(
 
     # Use the chat template to format the input
     if tokenizer.chat_template:
-        input_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        input_text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
     else:
         # Fallback for tokenizers without chat templates
         input_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
@@ -98,7 +105,7 @@ def cot_decode(
 
     input_ids = tokenizer.encode(input_text, return_tensors="pt").to(device)
     attention_mask = torch.ones_like(input_ids).to(device)
-    
+
     # Set pad_token_id if it's not set
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -113,8 +120,11 @@ def cot_decode(
     for idx in top_k_indices:
         # Generate sequence starting with the selected token
         start_ids = torch.cat([input_ids, idx.unsqueeze(0).unsqueeze(0)], dim=-1)
-        start_mask = torch.cat([attention_mask, torch.ones((1, 1), dtype=torch.long, device=device)], dim=-1)
-        
+        start_mask = torch.cat(
+            [attention_mask, torch.ones((1, 1), dtype=torch.long, device=device)],
+            dim=-1,
+        )
+
         output = model.generate(
             start_ids,
             attention_mask=start_mask,
@@ -131,20 +141,21 @@ def cot_decode(
             output_scores=True,
             return_dict_in_generate=True,
         )
-        
+
         generated_sequence = output.sequences[0]
-        answer_ids = generated_sequence[len(input_ids[0]):]
+        answer_ids = generated_sequence[len(input_ids[0]) :]
         answer_text = tokenizer.decode(answer_ids, skip_special_tokens=True)
-        
+
         # Calculate confidence score (Δ)
         confidence = calculate_confidence(output.scores, answer_ids)
         paths.append((answer_text, confidence))
-    
+
     if aggregate_paths:
         return aggregate_paths_based_on_scores(paths)
     else:
         return max(paths, key=lambda x: x[1])
-    
+
+
 # Usage example
 # from transformers import AutoModelForCausalLM, AutoTokenizer
 

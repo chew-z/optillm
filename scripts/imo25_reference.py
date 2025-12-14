@@ -4,7 +4,7 @@ Contains actual problems from the official contest and exact answers from Google
 """
 
 import re
-from typing import Dict, List, Set, Any, Optional
+from typing import Dict, Any, Optional
 
 # Actual IMO 2025 problems from the official contest
 IMO_2025_PROBLEMS = [
@@ -23,9 +23,9 @@ Let $n\\ge3$ be a given integer. Determine all nonnegative integers $k$ such tha
             "reduction_principle",
             "structural_lemma",
             "c_k_analysis",
-            "sunny_line_covering"
+            "sunny_line_covering",
         ],
-        "solution_approach": "reduction_to_specific_case"
+        "solution_approach": "reduction_to_specific_case",
     },
     {
         "id": 2,
@@ -42,9 +42,9 @@ Prove that the line through $H$ parallel to $AP$ is tangent to the circumcircle 
             "excenter_identification",
             "auxiliary_point_v",
             "orthocenter_tangency",
-            "circumcircle_properties"
+            "circumcircle_properties",
         ],
-        "solution_approach": "synthetic_geometry_with_coordinates"
+        "solution_approach": "synthetic_geometry_with_coordinates",
     },
     {
         "id": 3,
@@ -59,9 +59,9 @@ Determine the smallest real constant $c$ such that $f(n)\\le cn$ for all bonza f
             "classification_lemma",
             "set_s_analysis",
             "upper_bound_proof",
-            "construction_example"
+            "construction_example",
         ],
-        "solution_approach": "case_analysis_and_construction"
+        "solution_approach": "case_analysis_and_construction",
     },
     {
         "id": 4,
@@ -78,9 +78,9 @@ Determine all possible values of $a_1$.""",
             "regime_analysis",
             "evolution_dynamics",
             "divisibility_constraints",
-            "fixed_point_analysis"
+            "fixed_point_analysis",
         ],
-        "solution_approach": "sequence_analysis_with_regimes"
+        "solution_approach": "sequence_analysis_with_regimes",
     },
     {
         "id": 5,
@@ -101,9 +101,9 @@ Determine all values of $\\lambda$ for which Alice has a winning strategy and al
             "budget_analysis",
             "critical_threshold",
             "strategy_construction",
-            "drawing_strategies"
+            "drawing_strategies",
         ],
-        "solution_approach": "threshold_analysis_with_strategies"
+        "solution_approach": "threshold_analysis_with_strategies",
     },
     {
         "id": 6,
@@ -118,11 +118,12 @@ Determine the minimum number of tiles Matilda needs to place so that each row an
             "tiling_constraints",
             "row_column_requirements",
             "optimization_bounds",
-            "construction_proof"
+            "construction_proof",
         ],
-        "solution_approach": "extremal_combinatorics"
-    }
+        "solution_approach": "extremal_combinatorics",
+    },
 ]
+
 
 def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
     """
@@ -132,7 +133,7 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
         "correct_answer_found": False,
         "extracted_answer": None,
         "answer_score": 0.0,
-        "error_message": ""
+        "error_message": "",
     }
 
     solution_clean = solution.lower().replace(" ", "").replace("\n", " ")
@@ -146,13 +147,13 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
             r"\{1,0,3\}",
             r"\{3,1,0\}",
             # Allow other orderings
-            r"\{[013,\s]+\}" # General pattern
+            r"\{[013,\s]+\}",  # General pattern
         ]
 
         for pattern in set_patterns:
             if re.search(pattern, solution_clean):
                 # Verify it actually contains exactly 0, 1, 3
-                numbers = re.findall(r'\d+', re.search(pattern, solution_clean).group())
+                numbers = re.findall(r"\d+", re.search(pattern, solution_clean).group())
                 if sorted([int(x) for x in numbers]) == [0, 1, 3]:
                     result["correct_answer_found"] = True
                     result["extracted_answer"] = "{0, 1, 3}"
@@ -162,9 +163,11 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
     elif problem_id == 3:
         # Expected: 4
         # Look for "c = 4" or "constant is 4" etc.
-        if re.search(r"c\s*=\s*4(?![0-9])", solution) or \
-           re.search(r"constant.*4(?![0-9])", solution) or \
-           re.search(r"answer.*4(?![0-9])", solution):
+        if (
+            re.search(r"c\s*=\s*4(?![0-9])", solution)
+            or re.search(r"constant.*4(?![0-9])", solution)
+            or re.search(r"answer.*4(?![0-9])", solution)
+        ):
             result["correct_answer_found"] = True
             result["extracted_answer"] = "4"
             result["answer_score"] = 1.0
@@ -172,12 +175,7 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
     elif problem_id == 4:
         # Expected: 6J·12^K where gcd(J,10)=1
         # Look for the formula pattern
-        patterns = [
-            r"6j.*12\^k",
-            r"6.*j.*12\^k",
-            r"a_1\s*=\s*6.*12",
-            r"6.*\*.*12\^"
-        ]
+        patterns = [r"6j.*12\^k", r"6.*j.*12\^k", r"a_1\s*=\s*6.*12", r"6.*\*.*12\^"]
 
         for pattern in patterns:
             if re.search(pattern, solution_clean):
@@ -194,7 +192,7 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
             r"lambda\s*>\s*1/sqrt\(2\)",
             r"1/√2",
             r"√2/2",
-            r"sqrt\(2\)/2"
+            r"sqrt\(2\)/2",
         ]
 
         for pattern in patterns:
@@ -204,8 +202,12 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
 
         if threshold_found:
             # Also check for Alice/Bazza winning conditions
-            alice_wins = "alice.*win" in solution_clean or "alice.*λ.*>" in solution_clean
-            bazza_wins = "bazza.*win" in solution_clean or "bazza.*λ.*<" in solution_clean
+            alice_wins = (
+                "alice.*win" in solution_clean or "alice.*λ.*>" in solution_clean
+            )
+            bazza_wins = (
+                "bazza.*win" in solution_clean or "bazza.*λ.*<" in solution_clean
+            )
 
             if alice_wins and bazza_wins:
                 result["correct_answer_found"] = True
@@ -214,12 +216,15 @@ def verify_answer_format(problem_id: int, solution: str) -> Dict[str, Any]:
 
     elif problem_id == 6:
         # Expected: 2025
-        if re.search(r"2025", solution) and ("minimum" in solution_clean or "answer" in solution_clean):
+        if re.search(r"2025", solution) and (
+            "minimum" in solution_clean or "answer" in solution_clean
+        ):
             result["correct_answer_found"] = True
             result["extracted_answer"] = "2025"
             result["answer_score"] = 1.0
 
     return result
+
 
 def verify_key_insights(problem_id: int, solution: str) -> Dict[str, Any]:
     """
@@ -239,39 +244,40 @@ def verify_key_insights(problem_id: int, solution: str) -> Dict[str, Any]:
     insight_keywords = {
         # Problem 1
         "reduction_principle": ["reduction", "reduce", "specific case"],
-        "structural_lemma": ["structural", "lemma", "vertical", "horizontal", "diagonal"],
+        "structural_lemma": [
+            "structural",
+            "lemma",
+            "vertical",
+            "horizontal",
+            "diagonal",
+        ],
         "c_k_analysis": ["c(k)", "assertion", "pk can be covered"],
         "sunny_line_covering": ["sunny", "shady", "parallel"],
-
         # Problem 2
         "excenter_identification": ["excenter", "external", "angle bisector"],
         "auxiliary_point_v": ["auxiliary", "point v", "parallelogram"],
         "orthocenter_tangency": ["orthocenter", "tangent", "perpendicular"],
         "circumcircle_properties": ["circumcircle", "circumcenter"],
-
         # Problem 3
         "classification_lemma": ["classification", "lemma", "set s"],
         "set_s_analysis": ["s = p", "s = ∅", "s = {2}", "infinite", "finite"],
         "upper_bound_proof": ["upper bound", "f(n) ≤", "c ≤ 4"],
         "construction_example": ["construction", "example", "g(n)"],
-
         # Problem 4
         "regime_analysis": ["regime", "growth", "boost", "fixed point"],
         "evolution_dynamics": ["evolution", "sequence", "a_{n+1}"],
         "divisibility_constraints": ["6|an", "divisible", "v2", "v3"],
         "fixed_point_analysis": ["fixed point", "stable", "r(n) = 1"],
-
         # Problem 5
         "budget_analysis": ["budget", "ck", "evolution"],
         "critical_threshold": ["threshold", "1/√2", "critical"],
         "strategy_construction": ["strategy", "alice", "bazza"],
         "drawing_strategies": ["draw", "game continues", "forever"],
-
         # Problem 6
         "tiling_constraints": ["tile", "rectangular", "cover"],
         "row_column_requirements": ["row", "column", "exactly one"],
         "optimization_bounds": ["minimum", "lower bound", "upper bound"],
-        "construction_proof": ["construction", "proof", "achieve"]
+        "construction_proof": ["construction", "proof", "achieve"],
     }
 
     for insight in key_insights:
@@ -288,17 +294,20 @@ def verify_key_insights(problem_id: int, solution: str) -> Dict[str, Any]:
         "insight_score": insight_score,
         "insights_found": insights_found,
         "insights_missing": insights_missing,
-        "total_insights": len(key_insights)
+        "total_insights": len(key_insights),
     }
+
 
 def get_problem_by_id(problem_id: int) -> Optional[Dict[str, Any]]:
     """Get problem data by ID"""
     return next((p for p in IMO_2025_PROBLEMS if p["id"] == problem_id), None)
 
+
 def get_expected_answer(problem_id: int) -> Optional[str]:
     """Get the expected answer for a problem"""
     problem = get_problem_by_id(problem_id)
     return problem["expected_answer"] if problem else None
+
 
 def get_answer_type(problem_id: int) -> Optional[str]:
     """Get the answer type for a problem"""

@@ -1,6 +1,6 @@
 import spacy
 from presidio_analyzer import AnalyzerEngine
-from presidio_anonymizer import AnonymizerEngine, DeanonymizeEngine, OperatorConfig
+from presidio_anonymizer import AnonymizerEngine, OperatorConfig
 from presidio_anonymizer.operators import Operator, OperatorType
 
 from typing import Dict, Tuple, Optional
@@ -11,6 +11,7 @@ SLUG = "privacy"
 _analyzer_engine: Optional[AnalyzerEngine] = None
 _anonymizer_engine: Optional[AnonymizerEngine] = None
 _model_downloaded: bool = False
+
 
 class InstanceCounterAnonymizer(Operator):
     """
@@ -30,9 +31,7 @@ class InstanceCounterAnonymizer(Operator):
 
         entity_mapping_for_type = entity_mapping.get(entity_type)
         if not entity_mapping_for_type:
-            new_text = self.REPLACING_FORMAT.format(
-                entity_type=entity_type, index=0
-            )
+            new_text = self.REPLACING_FORMAT.format(entity_type=entity_type, index=0)
             entity_mapping[entity_type] = {}
 
         else:
@@ -71,6 +70,7 @@ class InstanceCounterAnonymizer(Operator):
     def operator_type(self) -> OperatorType:
         return OperatorType.Anonymize
 
+
 def download_model(model_name):
     global _model_downloaded
     if not _model_downloaded:
@@ -81,24 +81,27 @@ def download_model(model_name):
             print(f"{model_name} model already downloaded.")
         _model_downloaded = True
 
+
 def replace_entities(entity_map, text):
     # Create a reverse mapping of placeholders to entity names
     reverse_map = {}
     for entity_type, entities in entity_map.items():
         for entity_name, placeholder in entities.items():
             reverse_map[placeholder] = entity_name
-    
+
     # Function to replace placeholders with entity names
     def replace_placeholder(match):
         placeholder = match.group(0)
         return reverse_map.get(placeholder, placeholder)
-    
+
     # Use regex to find and replace all placeholders
     import re
-    pattern = r'<[A-Z_]+_\d+>'
+
+    pattern = r"<[A-Z_]+_\d+>"
     replaced_text = re.sub(pattern, replace_placeholder, text)
-    
+
     return replaced_text
+
 
 def get_analyzer_engine() -> AnalyzerEngine:
     """Get or create singleton AnalyzerEngine instance."""
@@ -110,6 +113,7 @@ def get_analyzer_engine() -> AnalyzerEngine:
         _analyzer_engine.analyze(text="warm up", language="en")
     return _analyzer_engine
 
+
 def get_anonymizer_engine() -> AnonymizerEngine:
     """Get or create singleton AnonymizerEngine instance."""
     global _anonymizer_engine
@@ -117,6 +121,7 @@ def get_anonymizer_engine() -> AnonymizerEngine:
         _anonymizer_engine = AnonymizerEngine()
         _anonymizer_engine.add_anonymizer(InstanceCounterAnonymizer)
     return _anonymizer_engine
+
 
 def run(system_prompt: str, initial_query: str, client, model: str) -> Tuple[str, int]:
     # Use the function
@@ -144,12 +149,13 @@ def run(system_prompt: str, initial_query: str, client, model: str) -> Tuple[str
         },
     )
     # print(f"Anonymized request: {anonymized_result.text}")
-    
+
     response = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": anonymized_result.text}],
+            {"role": "user", "content": anonymized_result.text},
+        ],
     )
 
     # print(entity_mapping)
@@ -157,5 +163,5 @@ def run(system_prompt: str, initial_query: str, client, model: str) -> Tuple[str
     # print(f"response: {final_response}")
 
     final_response = replace_entities(entity_mapping, final_response)
-    
+
     return final_response, response.usage.completion_tokens

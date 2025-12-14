@@ -14,74 +14,77 @@ SLUG = "deepthink"
 
 logger = logging.getLogger(__name__)
 
+
 def run(
-    system_prompt: str, 
-    initial_query: str, 
-    client, 
-    model: str, 
-    request_config: Dict[str, Any] = None
+    system_prompt: str,
+    initial_query: str,
+    client,
+    model: str,
+    request_config: Dict[str, Any] = None,
 ) -> Tuple[str, int]:
     """
     Main entry point for the Deep Think plugin.
-    
-    Combines SELF-DISCOVER reasoning structure discovery with 
+
+    Combines SELF-DISCOVER reasoning structure discovery with
     uncertainty-routed chain-of-thought generation.
-    
+
     Args:
         system_prompt: System prompt for the model
         initial_query: User's initial query/problem
         client: OpenAI-compatible client instance
         model: Model identifier
         request_config: Additional configuration parameters
-        
+
     Returns:
         Tuple of (response_text, completion_tokens_used)
     """
     logger.info("Starting Deep Think reasoning process")
-    
+
     # Extract configuration parameters
     config = _parse_config(request_config or {})
-    
+
     # Initialize components
     self_discover = SelfDiscover(
         client=client,
         model=model,
         max_tokens=config["max_tokens"],
-        request_config=request_config
+        request_config=request_config,
     )
 
     uncertainty_cot = UncertaintyRoutedCoT(
         client=client,
         model=model,
         max_tokens=config["max_tokens"],
-        request_config=request_config
+        request_config=request_config,
     )
-    
+
     total_tokens = 0
-    
+
     # Stage 1: SELF-DISCOVER reasoning structure (if enabled)
     reasoning_structure = None
     if config["enable_self_discover"]:
         logger.info("Discovering task-specific reasoning structure")
-        
+
         discovery_result = self_discover.discover_reasoning_structure(
             task_description=_extract_task_description(initial_query, system_prompt),
-            task_examples=None  # Could be enhanced to extract examples
+            task_examples=None,  # Could be enhanced to extract examples
         )
-        
+
         reasoning_structure = discovery_result["reasoning_structure"]
         total_tokens += discovery_result["completion_tokens"]
-        
-        logger.info(f"Discovered reasoning structure with {len(reasoning_structure)} components")
-    
+
+        logger.info(
+            f"Discovered reasoning structure with {len(reasoning_structure)} components"
+        )
+
     # Prepare enhanced prompt
     enhanced_prompt = _create_enhanced_prompt(
         system_prompt=system_prompt,
         initial_query=initial_query,
         reasoning_structure=reasoning_structure,
-        config=config
+        config=config,
     )
-    
+
     # Stage 2: Uncertainty-routed generation
     logger.info("Generating response with uncertainty routing")
 
@@ -90,14 +93,16 @@ def run(
         num_samples=config["deepthink_samples"],
         confidence_threshold=config["confidence_threshold"],
         temperature=config["temperature"],
-        top_p=config["top_p"]
+        top_p=config["top_p"],
     )
 
     total_tokens += generation_result["completion_tokens"]
 
     # Log routing decision
-    logger.info(f"Routing decision: {generation_result['routing_decision']} "
-               f"(confidence: {generation_result['confidence_score']:.3f})")
+    logger.info(
+        f"Routing decision: {generation_result['routing_decision']} "
+        f"(confidence: {generation_result['confidence_score']:.3f})"
+    )
 
     final_response = generation_result["final_response"]
 
@@ -106,13 +111,14 @@ def run(
         logger.error("Deep Think generation failed or was truncated")
         if not final_response:
             final_response = "Error: Failed to generate a response. The model may have exceeded token limits."
-    
+
     # Clean up the response if needed
     final_response = _clean_response(final_response)
-    
+
     logger.info(f"Deep Think completed successfully. Total tokens: {total_tokens}")
-    
+
     return final_response, total_tokens
+
 
 def _parse_config(request_config: Dict[str, Any]) -> Dict[str, Any]:
     """Parse and validate configuration parameters."""
@@ -124,7 +130,7 @@ def _parse_config(request_config: Dict[str, Any]) -> Dict[str, Any]:
         "temperature": 0.7,
         "top_p": 0.95,
         "enable_self_discover": True,
-        "reasoning_modules_limit": 7
+        "reasoning_modules_limit": 7,
     }
 
     # Override with request config values
@@ -133,26 +139,33 @@ def _parse_config(request_config: Dict[str, Any]) -> Dict[str, Any]:
             default_config[key] = value
 
     # Handle max_completion_tokens (preferred) or max_tokens (deprecated)
-    if 'max_completion_tokens' in request_config:
-        default_config['max_tokens'] = request_config['max_completion_tokens']
-    elif 'max_tokens' in request_config:
-        default_config['max_tokens'] = request_config['max_tokens']
-    
+    if "max_completion_tokens" in request_config:
+        default_config["max_tokens"] = request_config["max_completion_tokens"]
+    elif "max_tokens" in request_config:
+        default_config["max_tokens"] = request_config["max_tokens"]
+
     # Validate ranges
-    default_config["deepthink_samples"] = max(1, min(10, default_config["deepthink_samples"]))
-    default_config["confidence_threshold"] = max(0.0, min(1.0, default_config["confidence_threshold"]))
+    default_config["deepthink_samples"] = max(
+        1, min(10, default_config["deepthink_samples"])
+    )
+    default_config["confidence_threshold"] = max(
+        0.0, min(1.0, default_config["confidence_threshold"])
+    )
     default_config["temperature"] = max(0.0, min(2.0, default_config["temperature"]))
     default_config["top_p"] = max(0.0, min(1.0, default_config["top_p"]))
-    default_config["reasoning_modules_limit"] = max(3, min(15, default_config["reasoning_modules_limit"]))
-    
+    default_config["reasoning_modules_limit"] = max(
+        3, min(15, default_config["reasoning_modules_limit"])
+    )
+
     return default_config
+
 
 def _extract_task_description(initial_query: str, system_prompt: str) -> str:
     """Extract a task description for SELF-DISCOVER from the query and system prompt."""
-    
+
     # Combine system prompt and query to understand the task
     combined_text = f"{system_prompt}\n\n{initial_query}"
-    
+
     # Try to identify the type of task based on keywords and patterns
     task_keywords = {
         "mathematical": ["solve", "calculate", "equation", "math", "number", "formula"],
@@ -160,46 +173,48 @@ def _extract_task_description(initial_query: str, system_prompt: str) -> str:
         "creative": ["create", "design", "generate", "brainstorm", "invent"],
         "logical": ["reason", "logic", "prove", "deduce", "conclude"],
         "planning": ["plan", "strategy", "approach", "method", "steps"],
-        "problem_solving": ["problem", "solution", "solve", "fix", "resolve"]
+        "problem_solving": ["problem", "solution", "solve", "fix", "resolve"],
     }
-    
+
     detected_types = []
     combined_lower = combined_text.lower()
-    
+
     for task_type, keywords in task_keywords.items():
         if any(keyword in combined_lower for keyword in keywords):
             detected_types.append(task_type)
-    
+
     if detected_types:
         primary_type = detected_types[0]
         task_description = f"This is primarily a {primary_type} task that requires {', '.join(detected_types)} thinking."
     else:
         task_description = "This is a general reasoning task that requires systematic thinking and analysis."
-    
+
     # Add context from the query
     if len(initial_query) > 50:
         task_description += f" The specific task involves: {initial_query[:200]}..."
     else:
         task_description += f" The specific task is: {initial_query}"
-    
+
     return task_description
+
 
 def _create_enhanced_prompt(
     system_prompt: str,
-    initial_query: str, 
+    initial_query: str,
     reasoning_structure: Dict[str, Any] = None,
-    config: Dict[str, Any] = None
+    config: Dict[str, Any] = None,
 ) -> str:
     """Create an enhanced prompt that incorporates the reasoning structure."""
-    
+
     base_prompt = f"""System: {system_prompt}
 
 Task: {initial_query}"""
-    
+
     if reasoning_structure:
         import json
+
         structure_text = json.dumps(reasoning_structure, indent=2)
-        
+
         enhanced_prompt = f"""{base_prompt}
 
 REASONING STRUCTURE:
@@ -235,19 +250,23 @@ Please solve this problem using careful step-by-step reasoning.
 </think>
 
 Based on my analysis, the answer is:"""
-    
+
     return enhanced_prompt
+
 
 def _clean_response(response: str) -> str:
     """Clean up the final response."""
-    
+
     # Remove any trailing whitespace
     response = response.strip()
-    
+
     # Ensure the response doesn't end abruptly
-    if response and not response.endswith(('.', '!', '?', ':', '"', "'")):
+    if response and not response.endswith((".", "!", "?", ":", '"', "'")):
         # Don't add punctuation if it's a number or simple phrase
-        if not (response.replace(' ', '').replace(',', '').replace('.', '').isdigit() or len(response.split()) <= 3):
+        if not (
+            response.replace(" ", "").replace(",", "").replace(".", "").isdigit()
+            or len(response.split()) <= 3
+        ):
             response += "."
-    
+
     return response

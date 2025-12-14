@@ -10,58 +10,59 @@ import math
 import multiprocessing
 import traceback
 import optillm
-from optillm import conversation_logger
+
 
 class TimeoutException(Exception):
     pass
 
+
 def prepare_safe_globals():
     safe_globals = {
-        'print': print,
-        '__builtins__': {
-            'True': True,
-            'False': False,
-            'None': None,
-            'abs': abs,
-            'float': float,
-            'int': int,
-            'len': len,
-            'max': max,
-            'min': min,
-            'round': round,
-            'sum': sum,
-            'complex': complex,
-        }
+        "print": print,
+        "__builtins__": {
+            "True": True,
+            "False": False,
+            "None": None,
+            "abs": abs,
+            "float": float,
+            "int": int,
+            "len": len,
+            "max": max,
+            "min": min,
+            "round": round,
+            "sum": sum,
+            "complex": complex,
+        },
     }
-    
+
     # Add common math functions
-    safe_globals.update({
-        'log': math.log,
-        'log2': math.log2,
-        'sqrt': math.sqrt,
-        'exp': math.exp,
-        'sin': math.sin,
-        'cos': math.cos,
-        'tan': math.tan,
-        'pi': math.pi,
-        'e': math.e,
-    })
+    safe_globals.update(
+        {
+            "log": math.log,
+            "log2": math.log2,
+            "sqrt": math.sqrt,
+            "exp": math.exp,
+            "sin": math.sin,
+            "cos": math.cos,
+            "tan": math.tan,
+            "pi": math.pi,
+            "e": math.e,
+        }
+    )
 
     # Add complex number support
-    safe_globals['I'] = complex(0, 1)
-    safe_globals['Complex'] = complex
+    safe_globals["I"] = complex(0, 1)
+    safe_globals["Complex"] = complex
 
     return safe_globals
 
+
 def execute_code_in_process(code: str):
     import z3
-    import sympy
-    import math
-    import itertools
     from fractions import Fraction
 
     safe_globals = prepare_safe_globals()
-    
+
     # Add Z3 specific functions
     z3_whitelist = set(dir(z3))
     safe_globals.update({name: getattr(z3, name) for name in z3_whitelist})
@@ -71,38 +72,40 @@ def execute_code_in_process(code: str):
     safe_globals.update({name: getattr(sympy, name) for name in sympy_whitelist})
 
     # Ensure key Z3 and SymPy components are available
-    safe_globals.update({
-        'z3': z3,
-        'sympy': sympy,
-        'Solver': z3.Solver,
-        'solver': z3.Solver,
-        'Optimize': z3.Optimize,
-        'sat': z3.sat,
-        'unsat': z3.unsat,
-        'unknown': z3.unknown,
-        'Real': z3.Real,
-        'Int': z3.Int,
-        'Bool': z3.Bool,
-        'And': z3.And,
-        'Or': z3.Or,
-        'Not': z3.Not,
-        'Implies': z3.Implies,
-        'If': z3.If,
-        'Sum': z3.Sum,
-        'ForAll': z3.ForAll,
-        'Exists': z3.Exists,
-        'model': z3.Model,
-        'Symbol': sympy.Symbol,
-        'solve': sympy.solve,
-        'simplify': sympy.simplify,
-        'expand': sympy.expand,
-        'factor': sympy.factor,
-        'diff': sympy.diff,
-        'integrate': sympy.integrate,
-        'limit': sympy.limit,
-        'series': sympy.series,
-    })
-    
+    safe_globals.update(
+        {
+            "z3": z3,
+            "sympy": sympy,
+            "Solver": z3.Solver,
+            "solver": z3.Solver,
+            "Optimize": z3.Optimize,
+            "sat": z3.sat,
+            "unsat": z3.unsat,
+            "unknown": z3.unknown,
+            "Real": z3.Real,
+            "Int": z3.Int,
+            "Bool": z3.Bool,
+            "And": z3.And,
+            "Or": z3.Or,
+            "Not": z3.Not,
+            "Implies": z3.Implies,
+            "If": z3.If,
+            "Sum": z3.Sum,
+            "ForAll": z3.ForAll,
+            "Exists": z3.Exists,
+            "model": z3.Model,
+            "Symbol": sympy.Symbol,
+            "solve": sympy.solve,
+            "simplify": sympy.simplify,
+            "expand": sympy.expand,
+            "factor": sympy.factor,
+            "diff": sympy.diff,
+            "integrate": sympy.integrate,
+            "limit": sympy.limit,
+            "series": sympy.series,
+        }
+    )
+
     # Add custom functions
     def as_numerical(x):
         if z3.is_expr(x):
@@ -112,17 +115,17 @@ def execute_code_in_process(code: str):
                 return x.approx(20)
         return float(x)
 
-    safe_globals['as_numerical'] = as_numerical
+    safe_globals["as_numerical"] = as_numerical
 
     def Mod(x, y):
         return x % y
 
-    safe_globals['Mod'] = Mod
+    safe_globals["Mod"] = Mod
 
     def Rational(numerator, denominator=1):
         return z3.Real(str(Fraction(numerator, denominator)))
 
-    safe_globals['Rational'] = Rational
+    safe_globals["Rational"] = Rational
 
     output_buffer = io.StringIO()
     with contextlib.redirect_stdout(output_buffer):
@@ -132,8 +135,17 @@ def execute_code_in_process(code: str):
             return ("error", traceback.format_exc())
     return ("success", output_buffer.getvalue())
 
+
 class Z3SymPySolverSystem:
-    def __init__(self, system_prompt: str, client, model: str, timeout: int = 30, request_config: dict = None, request_id: str = None):
+    def __init__(
+        self,
+        system_prompt: str,
+        client,
+        model: str,
+        timeout: int = 30,
+        request_config: dict = None,
+        request_id: str = None,
+    ):
         self.system_prompt = system_prompt
         self.model = model
         self.client = client
@@ -144,22 +156,29 @@ class Z3SymPySolverSystem:
         # Extract max_tokens from request_config with default
         self.max_tokens = 4096
         if request_config:
-            self.max_tokens = request_config.get('max_tokens', self.max_tokens)
+            self.max_tokens = request_config.get("max_tokens", self.max_tokens)
 
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
 
     def process_query(self, query: str) -> str:
         try:
             analysis = self.analyze_query(query)
             if "SOLVER_CAN_BE_APPLIED: True" not in analysis:
                 return self.standard_llm_inference(query), self.solver_completion_tokens
-            
+
             formulation = self.extract_and_validate_expressions(analysis)
             solver_result = self.solve_with_z3_sympy(formulation)
-             
-            return self.generate_response(query, analysis, solver_result), self.solver_completion_tokens
+
+            return (
+                self.generate_response(query, analysis, solver_result),
+                self.solver_completion_tokens,
+            )
         except Exception as e:
-            logging.error(f"An error occurred while processing the query with Z3 and SymPy, returning standard llm inference results: {str(e)}")
+            logging.error(
+                f"An error occurred while processing the query with Z3 and SymPy, returning standard llm inference results: {str(e)}"
+            )
             return self.standard_llm_inference(query), self.solver_completion_tokens
 
     def analyze_query(self, query: str) -> str:
@@ -185,31 +204,43 @@ SOLVER_FORMULATION:
 Analysis:
 [Your step-by-step analysis]
 """
-        
+
         provider_request = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": analysis_prompt}
+                {"role": "user", "content": analysis_prompt},
             ],
             "max_tokens": 1024,
             "n": 1,
-            "temperature": 0.1
+            "temperature": 0.1,
         }
         analysis_response = self.client.chat.completions.create(**provider_request)
-        
+
         # Log provider call
-        if hasattr(optillm, 'conversation_logger') and optillm.conversation_logger and self.request_id:
-            response_dict = analysis_response.model_dump() if hasattr(analysis_response, 'model_dump') else analysis_response
-            optillm.conversation_logger.log_provider_call(self.request_id, provider_request, response_dict)
-        
+        if (
+            hasattr(optillm, "conversation_logger")
+            and optillm.conversation_logger
+            and self.request_id
+        ):
+            response_dict = (
+                analysis_response.model_dump()
+                if hasattr(analysis_response, "model_dump")
+                else analysis_response
+            )
+            optillm.conversation_logger.log_provider_call(
+                self.request_id, provider_request, response_dict
+            )
+
         self.solver_completion_tokens = analysis_response.usage.completion_tokens
         return analysis_response.choices[0].message.content
 
-    def generate_response(self, query: str, analysis: str, solver_result: Dict[str, Any]) -> str:
+    def generate_response(
+        self, query: str, analysis: str, solver_result: Dict[str, Any]
+    ) -> str:
         if solver_result.get("status") != "success":
             return self.standard_llm_inference(query)
-        
+
         response_prompt = f"""Provide a clear answer to the query using the analysis and solver result:
 
 Query: {query}
@@ -220,24 +251,32 @@ Solver Result: {solver_result.get("output")}
 
 Response:
 """
-        
+
         provider_request = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": response_prompt}
+                {"role": "user", "content": response_prompt},
             ],
             "max_tokens": self.max_tokens,
             "n": 1,
-            "temperature": 0.1
+            "temperature": 0.1,
         }
         response = self.client.chat.completions.create(**provider_request)
-        
+
         # Log provider call
-        if hasattr(optillm, 'conversation_logger') and optillm.conversation_logger and self.request_id:
-            response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-            optillm.conversation_logger.log_provider_call(self.request_id, provider_request, response_dict)
-        
+        if (
+            hasattr(optillm, "conversation_logger")
+            and optillm.conversation_logger
+            and self.request_id
+        ):
+            response_dict = (
+                response.model_dump() if hasattr(response, "model_dump") else response
+            )
+            optillm.conversation_logger.log_provider_call(
+                self.request_id, provider_request, response_dict
+            )
+
         self.solver_completion_tokens = response.usage.completion_tokens
         return response.choices[0].message.content
 
@@ -246,19 +285,27 @@ Response:
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": query}
+                {"role": "user", "content": query},
             ],
             "max_tokens": self.max_tokens,
             "n": 1,
-            "temperature": 0.1
+            "temperature": 0.1,
         }
         response = self.client.chat.completions.create(**provider_request)
-        
+
         # Log provider call
-        if hasattr(optillm, 'conversation_logger') and optillm.conversation_logger and self.request_id:
-            response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-            optillm.conversation_logger.log_provider_call(self.request_id, provider_request, response_dict)
-        
+        if (
+            hasattr(optillm, "conversation_logger")
+            and optillm.conversation_logger
+            and self.request_id
+        ):
+            response_dict = (
+                response.model_dump() if hasattr(response, "model_dump") else response
+            )
+            optillm.conversation_logger.log_provider_call(
+                self.request_id, provider_request, response_dict
+            )
+
         self.solver_completion_tokens = response.usage.completion_tokens
         return response.choices[0].message.content
 
@@ -268,12 +315,14 @@ Response:
             return formulation.group(1).strip()
         raise ValueError("No valid Z3 or SymPy formulation found in the analysis.")
 
-    def solve_with_z3_sympy(self, formulation: str, max_attempts: int = 3) -> Dict[str, Any]:
+    def solve_with_z3_sympy(
+        self, formulation: str, max_attempts: int = 3
+    ) -> Dict[str, Any]:
         for attempt in range(max_attempts):
             output = self.execute_solver_code(formulation)
             if "Error:" not in output:
                 return {"status": "success", "output": output}
-        
+
             error_prompt = f"""Fix the Z3 or SymPy code that resulted in an error. Follow these steps:
 
     1. Review the original code and the error message carefully.
@@ -299,28 +348,43 @@ Response:
                 "model": self.model,
                 "messages": [
                     {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": error_prompt}
+                    {"role": "user", "content": error_prompt},
                 ],
                 "max_tokens": 1024,
                 "n": 1,
-                "temperature": 0.1
+                "temperature": 0.1,
             }
             response = self.client.chat.completions.create(**provider_request)
-            
-            # Log provider call
-            if hasattr(optillm, 'conversation_logger') and optillm.conversation_logger and self.request_id:
-                response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
-                optillm.conversation_logger.log_provider_call(self.request_id, provider_request, response_dict)
-            
-            self.solver_completion_tokens = response.usage.completion_tokens
-            formulation = self.extract_and_validate_expressions(response.choices[0].message.content)
 
-        return {"status": "failed", "output": "Failed to solve after multiple attempts."}
+            # Log provider call
+            if (
+                hasattr(optillm, "conversation_logger")
+                and optillm.conversation_logger
+                and self.request_id
+            ):
+                response_dict = (
+                    response.model_dump()
+                    if hasattr(response, "model_dump")
+                    else response
+                )
+                optillm.conversation_logger.log_provider_call(
+                    self.request_id, provider_request, response_dict
+                )
+
+            self.solver_completion_tokens = response.usage.completion_tokens
+            formulation = self.extract_and_validate_expressions(
+                response.choices[0].message.content
+            )
+
+        return {
+            "status": "failed",
+            "output": "Failed to solve after multiple attempts.",
+        }
 
     def execute_solver_code(self, code: str) -> str:
         logging.info("Executing Z3 and SymPy solver code")
         logging.info(f"Code: {code}")
-        
+
         # Parse the code into an AST
         try:
             _ = ast.parse(code)
@@ -329,7 +393,7 @@ Response:
             return f"Error: Syntax error: {e}"
 
         # Execute the code in a separate process
-        ctx = multiprocessing.get_context('spawn')
+        ctx = multiprocessing.get_context("spawn")
         with ctx.Pool(1) as pool:
             async_result = pool.apply_async(execute_code_in_process, (code,))
             try:

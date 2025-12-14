@@ -7,10 +7,11 @@ as the primary parser with fallback patterns for various mathematical answer for
 
 import re
 import logging
-from typing import Optional, Union, Any, Dict, List
+from typing import Optional, Any
 import math_verify
 
 logger = logging.getLogger(__name__)
+
 
 class AnswerExtractor:
     """Universal answer extractor using math-verify with fallback patterns"""
@@ -18,7 +19,12 @@ class AnswerExtractor:
     def __init__(self):
         self.math_verify_timeout = 5  # seconds
 
-    def extract_answer(self, solution: str, problem_type: str = "general", problem_id: Optional[int] = None) -> Optional[Any]:
+    def extract_answer(
+        self,
+        solution: str,
+        problem_type: str = "general",
+        problem_id: Optional[int] = None,
+    ) -> Optional[Any]:
         """
         Universal answer extraction using math-verify library with fallback patterns.
 
@@ -33,7 +39,9 @@ class AnswerExtractor:
         if not solution:
             return None
 
-        logger.debug(f"Extracting answer from solution (type: {problem_type}, id: {problem_id})")
+        logger.debug(
+            f"Extracting answer from solution (type: {problem_type}, id: {problem_id})"
+        )
 
         # First try math-verify for robust mathematical parsing
         math_verify_result = self._try_math_verify(solution)
@@ -67,7 +75,9 @@ class AnswerExtractor:
     def _try_math_verify(self, solution: str) -> Optional[Any]:
         """Try to extract answer using math-verify library"""
         try:
-            parsed_result = math_verify.parse(solution, parsing_timeout=self.math_verify_timeout)
+            parsed_result = math_verify.parse(
+                solution, parsing_timeout=self.math_verify_timeout
+            )
             if parsed_result:
                 # math-verify returns various formats, we need to normalize
                 return self._normalize_math_verify_result(parsed_result)
@@ -85,7 +95,7 @@ class AnswerExtractor:
             try:
                 if result.isdigit():
                     return int(result)
-                elif result.replace('.', '', 1).isdigit():
+                elif result.replace(".", "", 1).isdigit():
                     float_val = float(result)
                     return int(float_val) if float_val == int(float_val) else float_val
             except ValueError:
@@ -105,10 +115,10 @@ class AnswerExtractor:
             # Problem 1: Set of integers k (expected: {0, 1, 2, ..., n})
             # Look for boxed set notation
             set_patterns = [
-                r'\\boxed\{([^}]+)\}',  # \boxed{...}
-                r'\{([^}]+)\}',  # Direct set notation
-                r'k\s*\\in\s*\{([^}]+)\}',  # k ∈ {...}
-                r'k\s*can\s*be\s*([0-9,\s]+)',  # "k can be 0, 1, 2"
+                r"\\boxed\{([^}]+)\}",  # \boxed{...}
+                r"\{([^}]+)\}",  # Direct set notation
+                r"k\s*\\in\s*\{([^}]+)\}",  # k ∈ {...}
+                r"k\s*can\s*be\s*([0-9,\s]+)",  # "k can be 0, 1, 2"
             ]
 
             for pattern in set_patterns:
@@ -129,17 +139,20 @@ class AnswerExtractor:
                         return {int(content)}
 
             # Fallback: look for "all non-negative integers" type descriptions
-            if any(phrase in solution_lower for phrase in ["all non-negative", "all integers", "any integer"]):
+            if any(
+                phrase in solution_lower
+                for phrase in ["all non-negative", "all integers", "any integer"]
+            ):
                 return "all_integers"  # Special marker for infinite sets
 
         elif problem_id == 3:
             # Problem 3: Constant c = 4
             constant_patterns = [
-                r'\\boxed\{(\d+)\}',  # \boxed{4}
-                r'c\s*=\s*(\d+)',  # c = 4
-                r'constant\s+is\s+(\d+)',  # constant is 4
-                r'answer\s+is\s+(\d+)',  # answer is 4
-                r'minimum\s+constant\s+is\s+(\d+)',  # minimum constant is 4
+                r"\\boxed\{(\d+)\}",  # \boxed{4}
+                r"c\s*=\s*(\d+)",  # c = 4
+                r"constant\s+is\s+(\d+)",  # constant is 4
+                r"answer\s+is\s+(\d+)",  # answer is 4
+                r"minimum\s+constant\s+is\s+(\d+)",  # minimum constant is 4
             ]
 
             for pattern in constant_patterns:
@@ -156,10 +169,10 @@ class AnswerExtractor:
 
             # General numeric patterns for problem 6
             number_patterns = [
-                r'\\boxed\{(\d+)\}',
-                r'answer\s+is\s+(\d+)',
-                r'minimum\s+number\s+is\s+(\d+)',
-                r'tiles?\s+is\s+(\d+)',
+                r"\\boxed\{(\d+)\}",
+                r"answer\s+is\s+(\d+)",
+                r"minimum\s+number\s+is\s+(\d+)",
+                r"tiles?\s+is\s+(\d+)",
             ]
 
             for pattern in number_patterns:
@@ -178,7 +191,7 @@ class AnswerExtractor:
         content = content.replace("\\ldots", "...").replace("\\dots", "...")
 
         # Extract numbers before ellipsis
-        numbers_before = re.findall(r'(\d+)', content.split('...')[0])
+        numbers_before = re.findall(r"(\d+)", content.split("...")[0])
         if len(numbers_before) >= 2:
             start = int(numbers_before[0])
             next_val = int(numbers_before[1])
@@ -190,30 +203,30 @@ class AnswerExtractor:
                 return {0, 1, 2, 3}  # Representative of the infinite set
 
         # Fallback: return the explicit numbers found
-        numbers = [int(x) for x in re.findall(r'\d+', content)]
+        numbers = [int(x) for x in re.findall(r"\d+", content)]
         return set(numbers)
 
     def _parse_explicit_set(self, content: str) -> set:
         """Parse explicit set like '0, 1, 3'"""
-        numbers = re.findall(r'\d+', content)
+        numbers = re.findall(r"\d+", content)
         return {int(x) for x in numbers}
 
     def _extract_aime_answer(self, solution: str) -> Optional[int]:
         """Extract AIME-style numeric answers (integers 0-999)"""
         # AIME problems expect integer answers between 0 and 999
         patterns = [
-            r'\$n=\\boxed{(\d+)}\$',
-            r'\\\[\\boxed{(\d+)}\\\]',
-            r'\\\[\\boxed{(\d+)}\.\\\]',
-            r'\\boxed{(\d+)}',
-            r'\$\\boxed{(\d+)}\$',
-            r'boxed{(\d+)}',
-            r'\\boxed\s*{\s*(\d+)\s*}',
-            r'\bboxed\s*{\s*(\d+)\s*}',
-            r'final answer is[^\d]*(\d+)',
-            r'answer is[^\d]*(\d+)',
-            r'answer:[^\d]*(\d+)',
-            r'= ?(\d+)$'
+            r"\$n=\\boxed{(\d+)}\$",
+            r"\\\[\\boxed{(\d+)}\\\]",
+            r"\\\[\\boxed{(\d+)}\.\\\]",
+            r"\\boxed{(\d+)}",
+            r"\$\\boxed{(\d+)}\$",
+            r"boxed{(\d+)}",
+            r"\\boxed\s*{\s*(\d+)\s*}",
+            r"\bboxed\s*{\s*(\d+)\s*}",
+            r"final answer is[^\d]*(\d+)",
+            r"answer is[^\d]*(\d+)",
+            r"answer:[^\d]*(\d+)",
+            r"= ?(\d+)$",
         ]
 
         for pattern in patterns:
@@ -232,7 +245,7 @@ class AnswerExtractor:
                     continue
 
         # Fallback: extract last number in solution
-        numbers = re.findall(r'(\d+)', solution)
+        numbers = re.findall(r"(\d+)", solution)
         if numbers:
             try:
                 last_number = int(numbers[-1])
@@ -248,17 +261,15 @@ class AnswerExtractor:
         # Try various common mathematical answer formats
         patterns = [
             # Boxed answers
-            (r'\\boxed\{([^}]+)\}', self._parse_boxed_content),
-            (r'boxed\{([^}]+)\}', self._parse_boxed_content),
-
+            (r"\\boxed\{([^}]+)\}", self._parse_boxed_content),
+            (r"boxed\{([^}]+)\}", self._parse_boxed_content),
             # Direct answer statements
-            (r'(?:the\s+)?answer\s+is\s+([^\n.!?]+)', str.strip),
-            (r'(?:final\s+)?answer:\s*([^\n.!?]+)', str.strip),
-            (r'therefore,?\s+([^\n.!?]+)', str.strip),
-            (r'thus,?\s+([^\n.!?]+)', str.strip),
-
+            (r"(?:the\s+)?answer\s+is\s+([^\n.!?]+)", str.strip),
+            (r"(?:final\s+)?answer:\s*([^\n.!?]+)", str.strip),
+            (r"therefore,?\s+([^\n.!?]+)", str.strip),
+            (r"thus,?\s+([^\n.!?]+)", str.strip),
             # Equation solutions
-            (r'=\s*([^\n.!?]+)$', str.strip),
+            (r"=\s*([^\n.!?]+)$", str.strip),
         ]
 
         for pattern, processor in patterns:
@@ -289,11 +300,15 @@ class AnswerExtractor:
             pass
 
         # Try to parse as set
-        if content.startswith('{') and content.endswith('}'):
+        if content.startswith("{") and content.endswith("}"):
             try:
                 set_content = content[1:-1]  # Remove braces
                 if "," in set_content:
-                    numbers = [int(x.strip()) for x in set_content.split(',') if x.strip().isdigit()]
+                    numbers = [
+                        int(x.strip())
+                        for x in set_content.split(",")
+                        if x.strip().isdigit()
+                    ]
                     return set(numbers)
             except ValueError:
                 pass
@@ -305,8 +320,11 @@ class AnswerExtractor:
 # Global instance for easy importing
 answer_extractor = AnswerExtractor()
 
+
 # Convenience function for direct use
-def extract_answer(solution: str, problem_type: str = "general", problem_id: Optional[int] = None) -> Optional[Any]:
+def extract_answer(
+    solution: str, problem_type: str = "general", problem_id: Optional[int] = None
+) -> Optional[Any]:
     """
     Extract answer from solution text.
 

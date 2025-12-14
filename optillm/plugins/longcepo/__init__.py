@@ -7,4 +7,4 @@ from .main import run_longcepo
 
 __version__ = "1.0.0"
 __author__ = "Cerebras"
-__all__ = ['run_longcepo']
+__all__ = ["run_longcepo"]
