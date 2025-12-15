@@ -1108,11 +1108,29 @@ def proxy():
                     # Strip unsupported 'n'
                     if "n" in kwargs:
                         kwargs.pop("n", None)
-                    # Normalize model name: if client was given a prefixed model like 'zai/glm-4.6',
-                    # use only the provider-specific model identifier (e.g., 'glm-4.6').
-                    if "model" in kwargs and isinstance(kwargs["model"], str):
-                        if "/" in kwargs["model"]:
-                            kwargs["model"] = kwargs["model"].split("/", 1)[1]
+                    # Normalize model name using central helper (handles prefixes and aliases)
+                    try:
+                        import optillm as _opt
+
+                        if "model" in kwargs:
+                            before = kwargs["model"]
+                            kwargs["model"] = _opt._normalize_model_for_provider(
+                                kwargs["model"], client
+                            )
+                            if before != kwargs["model"]:
+                                logger.info(
+                                    "Z.ai patched create: normalized model '%s' -> '%s'",
+                                    before,
+                                    kwargs["model"],
+                                )
+                    except Exception:
+                        # Fallback: best-effort rightmost segment after '/'
+                        if (
+                            "model" in kwargs
+                            and isinstance(kwargs["model"], str)
+                            and "/" in kwargs["model"]
+                        ):
+                            kwargs["model"] = kwargs["model"].rsplit("/", 1)[-1]
                     return orig_create(**kwargs)
 
                 client.chat.completions.create = _zai_safe_create

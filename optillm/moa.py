@@ -70,7 +70,12 @@ def mixture_of_agents(
             raise Exception("No valid completions generated (all were None)")
 
     except Exception as e:
-        logger.warning(f"n parameter not supported by provider: {str(e)}")
+        # Only claim 'n not supported' when it's clearly about 'n'; otherwise log the true error
+        err_msg = str(e)
+        if "unexpected keyword argument 'n'" in err_msg or " parameter 'n'" in err_msg:
+            logger.warning(f"n parameter not supported by provider: {err_msg}")
+        else:
+            logger.warning(f"Initial multi-sample generation failed: {err_msg}")
         logger.info("Falling back to generating 3 completions one by one")
 
         # Fallback: Generate 3 completions one by one in a loop
@@ -242,7 +247,8 @@ def mixture_of_agents(
         "temperature": 0.1,
     }
 
-    final_response = client.chat.completions.create(**provider_request)
+    # Use safe wrapper to ensure provider-specific normalization and sanitization
+    final_response = optillm.safe_completions_create(client, provider_request)
 
     # Convert response to dict for logging
     response_dict = (
