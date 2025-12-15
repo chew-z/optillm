@@ -44,7 +44,7 @@ def round_trip_optimization(
         "n": 1,
         "temperature": 0.1,
     }
-    response_c1 = client.chat.completions.create(**provider_request)
+    response_c1 = optillm.safe_completions_create(client, provider_request)
 
     # Log provider call
     if (
@@ -79,7 +79,7 @@ def round_trip_optimization(
         "n": 1,
         "temperature": 0.1,
     }
-    response_q2 = client.chat.completions.create(**provider_request)
+    response_q2 = optillm.safe_completions_create(client, provider_request)
 
     # Log provider call
     if (
@@ -111,7 +111,7 @@ def round_trip_optimization(
         "n": 1,
         "temperature": 0.1,
     }
-    response_c2 = client.chat.completions.create(**provider_request)
+    response_c2 = optillm.safe_completions_create(client, provider_request)
 
     # Log provider call
     if (
@@ -151,7 +151,7 @@ def round_trip_optimization(
         "n": 1,
         "temperature": 0.1,
     }
-    response_c3 = client.chat.completions.create(**provider_request)
+    response_c3 = optillm.safe_completions_create(client, provider_request)
 
     # Log provider call
     if (

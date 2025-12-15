@@ -215,7 +215,9 @@ Analysis:
             "n": 1,
             "temperature": 0.1,
         }
-        analysis_response = self.client.chat.completions.create(**provider_request)
+        analysis_response = optillm.safe_completions_create(
+            self.client, provider_request
+        )
 
         # Log provider call
         if (
@@ -262,7 +264,7 @@ Response:
             "n": 1,
             "temperature": 0.1,
         }
-        response = self.client.chat.completions.create(**provider_request)
+        response = optillm.safe_completions_create(self.client, provider_request)
 
         # Log provider call
         if (
@@ -291,7 +293,10 @@ Response:
             "n": 1,
             "temperature": 0.1,
         }
-        response = self.client.chat.completions.create(**provider_request)
+        provider_request_sanitized = optillm.strip_unsupported_n(
+            self.client, provider_request
+        )
+        response = self.client.chat.completions.create(**provider_request_sanitized)
 
         # Log provider call
         if (

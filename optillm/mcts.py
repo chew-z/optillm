@@ -1,8 +1,10 @@
 import random
 import logging
+from typing import List, Dict, Any
+
 import numpy as np
 import networkx as nx
-from typing import List, Dict
+import optillm
 from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)
@@ -19,57 +21,55 @@ class DialogueState:
         self.conversation_history = conversation_history
         self.current_query = current_query
 
-    def __str__(self):
-        return f"System: {self.system_prompt}\nHistory: {self.conversation_history}\nCurrent Query: {self.current_query}"
-
 
 class MCTSNode:
-    def __init__(self, state: DialogueState, parent=None):
+    def __init__(self, state: DialogueState, parent: "MCTSNode" = None):
         self.state = state
         self.parent = parent
-        self.children = []
+        self.children: List["MCTSNode"] = []
         self.visits = 0
-        self.value = 0
+        self.value = 0.0
 
 
 class MCTS:
     def __init__(
         self,
-        simulation_depth,
-        exploration_weight,
-        client,
-        model,
-        request_config=None,
-        request_id=None,
+        simulation_depth: int = 1,
+        exploration_weight: float = 0.2,
+        client: Any = None,
+        model: str = "gpt-4o-mini",
+        request_config: dict = None,
+        request_id: str = None,
+        max_tokens: int = 1024,
     ):
         self.simulation_depth = simulation_depth
         self.exploration_weight = exploration_weight
-        self.root = None
-        self.graph = nx.Graph()
-        self.node_labels = {}
         self.client = client
         self.model = model
-        self.completion_tokens = 0
+        self.request_config = request_config or {}
         self.request_id = request_id
+        self.max_tokens = max_tokens
 
-        # Extract max_tokens from request_config with default
-        self.max_tokens = 4096
-        if request_config:
-            self.max_tokens = request_config.get("max_tokens", self.max_tokens)
+        self.root: MCTSNode | None = None
+        self.graph = nx.DiGraph()
+        self.node_labels = {}
+        self.completion_tokens = 0
 
     def select(self, node: MCTSNode) -> MCTSNode:
-        logger.debug(
-            f"Selecting node. Current node visits: {node.visits}, value: {node.value}"
-        )
-        if not node.children:
-            logger.debug("Node has no children. Returning current node.")
-            return node
-        selected_node = max(
-            node.children,
-            key=lambda c: c.value / (c.visits + 1e-8)
-            + self.exploration_weight
-            * np.sqrt(np.log(node.visits + 1) / (c.visits + 1e-8)),
-        )
+        # Select child with highest UCB score
+        best_score = None
+        selected_node = None
+        for c in node.children:
+            if c.visits == 0:
+                score = float("inf")
+            else:
+                score = c.value + self.exploration_weight * np.sqrt(
+                    np.log(node.visits + 1) / (c.visits + 1e-8)
+                )
+            if best_score is None or score > best_score:
+                best_score = score
+                selected_node = c
+
         logger.debug(
             f"Selected child node. Visits: {selected_node.visits}, Value: {selected_node.value}"
         )
@@ -87,7 +87,7 @@ class MCTS:
             self.node_labels[id(child)] = (
                 f"Visits: {child.visits}\nValue: {child.value:.2f}"
             )
-            logger.debug(f"Created child node {i+1}. Action: {action[:50]}...")
+            logger.debug(f"Created child node {i + 1}. Action: {action[:50]}...")
         selected_child = random.choice(node.children)
         logger.debug(
             f"Randomly selected child node for simulation. Visits: {selected_child.visits}, Value: {selected_child.value}"
@@ -105,7 +105,7 @@ class MCTS:
                 break
             action = random.choice(self.generate_actions(state))
             state = self.apply_action(state, action)
-            logger.debug(f"Simulation step {i+1}. Action: {action[:50]}...")
+            logger.debug(f"Simulation step {i + 1}. Action: {action[:50]}...")
         value = self.evaluate_state(state)
         logger.debug(f"Simulation complete. Final state value: {value}")
         return value
@@ -134,7 +134,7 @@ class MCTS:
             logger.debug("Created root node")
 
         for i in range(num_simulations):
-            logger.debug(f"Starting simulation {i+1}")
+            logger.debug(f"Starting simulation {i + 1}")
             node = self.select(self.root)
             if not self.is_terminal(node.state):
                 node = self.expand(node)
@@ -157,35 +157,73 @@ class MCTS:
         n = 3
 
         logger.info(f"Requesting {n} completions from the model")
-        provider_request = {
+        provider_request_base = {
             "model": self.model,
             "messages": messages,
             "max_tokens": self.max_tokens,
-            "n": n,
             "temperature": 1,
         }
-        response = self.client.chat.completions.create(**provider_request)
 
-        # Log provider call
-        if self.request_id:
-            response_dict = (
-                response.model_dump() if hasattr(response, "model_dump") else response
-            )
-            conversation_logger.log_provider_call(
-                self.request_id, provider_request, response_dict
-            )
+        # Some providers (e.g., Z.ai) do not support the 'n' parameter.
+        client_type = str(type(self.client))
+        is_zai = "zai" in client_type.lower()
 
-        # Check for valid response with None-checking
-        if response is None or not response.choices:
-            logger.error("Failed to get valid completions from the model")
-            return []
+        if is_zai:
+            # Make multiple single-completion requests
+            responses = []
+            for i in range(n):
+                resp = self.client.chat.completions.create(**provider_request_base)
+                responses.append(resp)
 
-        completions = [
-            choice.message.content.strip()
-            for choice in response.choices
-            if choice.message.content is not None
-        ]
-        self.completion_tokens += response.usage.completion_tokens
+            # Log provider calls if request_id provided
+            if self.request_id:
+                for resp in responses:
+                    response_dict = (
+                        resp.model_dump() if hasattr(resp, "model_dump") else resp
+                    )
+                    conversation_logger.log_provider_call(
+                        self.request_id, provider_request_base, response_dict
+                    )
+
+            # Aggregate completions
+            for resp in responses:
+                if resp and resp.choices:
+                    for choice in resp.choices:
+                        if choice.message.content is not None:
+                            completions.append(choice.message.content.strip())
+                    if hasattr(resp, "usage") and hasattr(
+                        resp.usage, "completion_tokens"
+                    ):
+                        self.completion_tokens += resp.usage.completion_tokens
+        else:
+            provider_request = {**provider_request_base, "n": n}
+            response = self.client.chat.completions.create(**provider_request)
+
+            # Log provider call
+            if self.request_id:
+                response_dict = (
+                    response.model_dump()
+                    if hasattr(response, "model_dump")
+                    else response
+                )
+                conversation_logger.log_provider_call(
+                    self.request_id, provider_request, response_dict
+                )
+
+            # Check for valid response with None-checking
+            if response is None or not response.choices:
+                logger.error("Failed to get valid completions from the model")
+                return []
+
+            completions = [
+                choice.message.content.strip()
+                for choice in response.choices
+                if choice.message.content is not None
+            ]
+            if hasattr(response, "usage") and hasattr(
+                response.usage, "completion_tokens"
+            ):
+                self.completion_tokens += response.usage.completion_tokens
         logger.info(f"Received {len(completions)} completions from the model")
         return completions
 
@@ -208,7 +246,6 @@ class MCTS:
             "model": self.model,
             "messages": messages,
             "max_tokens": min(self.max_tokens, 1024),
-            "n": 1,
             "temperature": 1,
         }
         response = self.client.chat.completions.create(**provider_request)
@@ -261,7 +298,6 @@ class MCTS:
             "model": self.model,
             "messages": messages,
             "max_tokens": 256,
-            "n": 1,
             "temperature": 0.1,
         }
         response = self.client.chat.completions.create(**provider_request)

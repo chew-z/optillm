@@ -17,7 +17,6 @@ from typing import Tuple, Union, Dict, Any, List
 from dataclasses import fields
 
 # Import approach modules
-from optillm.mcts import chat_with_mcts
 from optillm.bon import best_of_n_sampling
 from optillm.moa import mixture_of_agents
 from optillm.rto import round_trip_optimization
@@ -309,9 +308,20 @@ def none_approach(
         # Prepare request data for logging
         provider_request = {"model": model, "messages": normalized_messages, **kwargs}
 
-        # Make the direct completion call with normalized messages and parameters
+        # Sanitize kwargs for providers that do not support certain parameters (e.g., Z.ai 'n')
+        sanitized_kwargs = dict(kwargs)
+        client_type = str(type(client)).lower()
+        if "zai" in client_type:
+            # Remove unsupported 'n' if present; approaches will handle fallback as needed
+            if "n" in sanitized_kwargs:
+                logger.warning(
+                    "Stripping unsupported 'n' from kwargs for Z.ai provider"
+                )
+                sanitized_kwargs.pop("n", None)
+
+        # Make the direct completion call with normalized messages and sanitized parameters
         response = client.chat.completions.create(
-            model=model, messages=normalized_messages, **kwargs
+            model=model, messages=normalized_messages, **sanitized_kwargs
         )
 
         # Convert to dict if it's not already
@@ -396,7 +406,9 @@ def load_plugins():
                         f"Plugin {module_name} from {source} missing required attributes (SLUG and run)"
                     )
             except Exception as e:
-                logger.error(f"Error loading {source} plugin {plugin_file}: {str(e)}")
+                logger.warning(
+                    f"Skipping {source} plugin {plugin_file} due to missing optional dependency or error: {e}"
+                )
 
     if not plugin_approaches:
         logger.warning("No plugins loaded from any location")
@@ -1087,6 +1099,28 @@ def proxy():
             if "n" in request_config:
                 logger.debug("Removing unsupported 'n' from request for Z.ai provider")
                 request_config.pop("n", None)
+
+            # Monkey-patch Z.ai client's completions.create to ignore unsupported 'n' kwarg
+            try:
+                orig_create = client.chat.completions.create
+
+                def _zai_safe_create(**kwargs):
+                    # Strip unsupported 'n'
+                    if "n" in kwargs:
+                        kwargs.pop("n", None)
+                    # Normalize model name: if client was given a prefixed model like 'zai/glm-4.6',
+                    # use only the provider-specific model identifier (e.g., 'glm-4.6').
+                    if "model" in kwargs and isinstance(kwargs["model"], str):
+                        if "/" in kwargs["model"]:
+                            kwargs["model"] = kwargs["model"].split("/", 1)[1]
+                    return orig_create(**kwargs)
+
+                client.chat.completions.create = _zai_safe_create
+                logger.debug(
+                    "Patched Z.ai client's chat.completions.create to ignore 'n'"
+                )
+            except Exception as e:
+                logger.debug(f"Could not patch Z.ai client: {e}")
     except Exception:
         # If zai import or isinstance check fails, proceed without sanitization
         pass

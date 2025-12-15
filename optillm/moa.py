@@ -1,4 +1,5 @@
 import logging
+import optillm
 from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def mixture_of_agents(
             "temperature": 1,
         }
 
-        response = client.chat.completions.create(**provider_request)
+        response = optillm.safe_completions_create(client, provider_request)
 
         # Convert response to dict for logging
         response_dict = (
@@ -86,7 +87,7 @@ def mixture_of_agents(
                     "temperature": 1,
                 }
 
-                response = client.chat.completions.create(**provider_request)
+                response = optillm.safe_completions_create(client, provider_request)
 
                 # Convert response to dict for logging
                 response_dict = (
@@ -108,16 +109,16 @@ def mixture_of_agents(
                     or response.choices[0].message.content is None
                     or response.choices[0].finish_reason == "length"
                 ):
-                    logger.warning(f"Completion {i+1}/3 truncated or empty, skipping")
+                    logger.warning(f"Completion {i + 1}/3 truncated or empty, skipping")
                     continue
 
                 completions.append(response.choices[0].message.content)
                 moa_completion_tokens += response.usage.completion_tokens
-                logger.debug(f"Generated completion {i+1}/3")
+                logger.debug(f"Generated completion {i + 1}/3")
 
             except Exception as fallback_error:
                 logger.error(
-                    f"Error generating completion {i+1}: {str(fallback_error)}"
+                    f"Error generating completion {i + 1}: {str(fallback_error)}"
                 )
                 continue
 
@@ -175,7 +176,7 @@ def mixture_of_agents(
         "temperature": 0.1,
     }
 
-    critique_response = client.chat.completions.create(**provider_request)
+    critique_response = optillm.safe_completions_create(client, provider_request)
 
     # Convert response to dict for logging
     response_dict = (

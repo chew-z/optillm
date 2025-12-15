@@ -5,6 +5,7 @@ azure.identity
 litellm
 requests
 cerebras_cloud_sdk
+zai-sdk
 numpy
 networkx
 z3-solver
