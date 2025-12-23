@@ -115,6 +115,7 @@ tests/test_json_plugin.py
 tests/test_mars_imo25.py
 tests/test_mars_parallel.py
 tests/test_mcp_plugin.py
+tests/test_model_normalization.py
 tests/test_n_parameter.py
 tests/test_plugins.py
 tests/test_privacy_plugin_performance.py

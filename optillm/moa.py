@@ -143,11 +143,58 @@ def mixture_of_agents(
     # Handle case where fewer than 3 completions were generated
     if len(completions) < 3:
         original_count = len(completions)
-        # Pad with the first completion to ensure we have 3
-        while len(completions) < 3:
-            completions.append(completions[0])
-        logger.warning(
-            f"Only generated {original_count} unique completions, padded to 3 for critique"
+        logger.info(
+            f"Only generated {original_count} completions via n parameter, generating {3 - original_count} more"
+        )
+        # Generate additional completions one by one to reach 3 unique ones
+        for i in range(original_count, 3):
+            try:
+                provider_request = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": initial_query},
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": 1,
+                }
+
+                response = optillm.safe_completions_create(client, provider_request)
+
+                # Convert response to dict for logging
+                response_dict = (
+                    response.model_dump()
+                    if hasattr(response, "model_dump")
+                    else response
+                )
+
+                # Log provider call if conversation logging is enabled
+                if request_id:
+                    conversation_logger.log_provider_call(
+                        request_id, provider_request, response_dict
+                    )
+
+                # Check for valid response with None-checking
+                if (
+                    response is None
+                    or not response.choices
+                    or response.choices[0].message.content is None
+                    or response.choices[0].finish_reason == "length"
+                ):
+                    logger.warning(f"Additional completion {i + 1}/3 truncated or empty, padding with first completion")
+                    completions.append(completions[0])
+                else:
+                    completions.append(response.choices[0].message.content)
+                    moa_completion_tokens += response.usage.completion_tokens
+                    logger.debug(f"Generated additional completion {i + 1}/3")
+
+            except Exception as e:
+                logger.warning(f"Error generating additional completion {i + 1}: {str(e)}")
+                # Pad with first completion on error
+                completions.append(completions[0])
+
+        logger.info(
+            f"Generated {len(completions)} total completions ({original_count} from n parameter, {3 - original_count} additional)"
         )
 
     logger.debug("Preparing critique prompt")

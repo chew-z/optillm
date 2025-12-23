@@ -66,6 +66,56 @@ def best_of_n_sampling(
         if not completions:
             raise Exception("No valid completions generated (all were None)")
 
+        # Handle case where fewer than n completions were generated
+        if len(completions) < n:
+            original_count = len(completions)
+            logger.info(
+                f"Only generated {original_count} completions via n parameter, generating {n - original_count} more"
+            )
+            # Generate additional completions one by one to reach n unique ones
+            for i in range(original_count, n):
+                try:
+                    provider_request = {
+                        "model": model,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": 1,
+                    }
+                    response = optillm.safe_completions_create(client, provider_request)
+
+                    # Log provider call
+                    if request_id:
+                        response_dict = (
+                            response.model_dump()
+                            if hasattr(response, "model_dump")
+                            else response
+                        )
+                        conversation_logger.log_provider_call(
+                            request_id, provider_request, response_dict
+                        )
+
+                    # Check for valid response with None-checking
+                    if (
+                        response is None
+                        or not response.choices
+                        or response.choices[0].message.content is None
+                        or response.choices[0].finish_reason == "length"
+                    ):
+                        logger.warning(f"Additional completion {i + 1}/{n} truncated or empty, skipping")
+                        continue
+                    else:
+                        completions.append(response.choices[0].message.content)
+                        bon_completion_tokens += response.usage.completion_tokens
+                        logger.debug(f"Generated additional completion {i + 1}/{n}")
+
+                except Exception as e:
+                    logger.warning(f"Error generating additional completion {i + 1}: {str(e)}")
+                    continue
+
+            logger.info(
+                f"Generated {len(completions)} total completions ({original_count} from n parameter, {len(completions) - original_count} additional)"
+            )
+
     except Exception as e:
         logger.warning(f"n parameter not supported by provider: {str(e)}")
         logger.info(f"Falling back to generating {n} completions one by one")
