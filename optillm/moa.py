@@ -4,6 +4,40 @@ from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)
 
+# Agent personalities for MOA - distinct perspectives that catch different mistakes
+MOA_AGENTS = [
+    {
+        "name": "explorer",
+        "title": "EXPLORER",
+        "system_suffix": (
+            " You are an EXPLORER agent in a Mixture of Agents system.\n"
+            "Your role: Think creatively, consider unconventional approaches, and generate diverse solutions.\n"
+            "Embrace brainstorming and explore multiple angles even if they seem unusual at first."
+        ),
+        "temperature": 1.0,
+    },
+    {
+        "name": "analyst",
+        "title": "ANALYST",
+        "system_suffix": (
+            " You are an ANALYST agent in a Mixture of Agents system.\n"
+            "Your role: Be methodical, thorough, and systematic. Break down the problem step by step.\n"
+            "Focus on logical structure, clear reasoning, and comprehensive coverage of the problem space."
+        ),
+        "temperature": 0.3,
+    },
+    {
+        "name": "critic",
+        "title": "CRITIC",
+        "system_suffix": (
+            " You are a CRITIC agent in a Mixture of Agents system.\n"
+            "Your role: Be skeptical and identify potential weaknesses, edge cases, and failure modes.\n"
+            "Question assumptions and highlight what might go wrong or what's being overlooked."
+        ),
+        "temperature": 0.5,
+    },
+]
+
 
 def mixture_of_agents(
     system_prompt: str,
@@ -22,200 +56,100 @@ def mixture_of_agents(
         max_tokens = request_config.get("max_tokens", max_tokens)
 
     completions = []
+    agent_names = []
 
-    logger.debug(f"Generating initial completions for query: {initial_query}")
+    logger.debug("Generating agent responses with distinct personalities")
 
-    try:
-        # Try to generate 3 completions in a single API call using n parameter
-        provider_request = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": initial_query},
-            ],
-            "max_tokens": max_tokens,
-            "n": 3,
-            "temperature": 1,
-        }
+    # Generate responses from each distinct agent
+    for agent in MOA_AGENTS:
+        agent_name = agent["title"]
+        agent_names.append(agent_name)
+        agent_system = system_prompt + agent["system_suffix"]
 
-        response = optillm.safe_completions_create(client, provider_request)
+        try:
+            provider_request = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": agent_system},
+                    {"role": "user", "content": initial_query},
+                ],
+                "max_tokens": max_tokens,
+                "temperature": agent["temperature"],
+            }
 
-        # Convert response to dict for logging
-        response_dict = (
-            response.model_dump() if hasattr(response, "model_dump") else response
-        )
+            response = optillm.safe_completions_create(client, provider_request)
 
-        # Log provider call if conversation logging is enabled
-        if request_id:
-            conversation_logger.log_provider_call(
-                request_id, provider_request, response_dict
+            # Convert response to dict for logging
+            response_dict = (
+                response.model_dump() if hasattr(response, "model_dump") else response
             )
 
-        # Check for valid response with None-checking
-        if response is None or not response.choices:
-            raise Exception("Response is None or has no choices")
-
-        completions = [
-            choice.message.content
-            for choice in response.choices
-            if choice.message.content is not None
-        ]
-        moa_completion_tokens += response.usage.completion_tokens
-        logger.info(
-            f"Generated {len(completions)} initial completions using n parameter. Tokens used: {response.usage.completion_tokens}"
-        )
-
-        # Check if any valid completions were generated
-        if not completions:
-            raise Exception("No valid completions generated (all were None)")
-
-    except Exception as e:
-        # Only claim 'n not supported' when it's clearly about 'n'; otherwise log the true error
-        err_msg = str(e)
-        if "unexpected keyword argument 'n'" in err_msg or " parameter 'n'" in err_msg:
-            logger.warning(f"n parameter not supported by provider: {err_msg}")
-        else:
-            logger.warning(f"Initial multi-sample generation failed: {err_msg}")
-        logger.info("Falling back to generating 3 completions one by one")
-
-        # Fallback: Generate 3 completions one by one in a loop
-        completions = []
-        for i in range(3):
-            try:
-                provider_request = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": initial_query},
-                    ],
-                    "max_tokens": max_tokens,
-                    "temperature": 1,
-                }
-
-                response = optillm.safe_completions_create(client, provider_request)
-
-                # Convert response to dict for logging
-                response_dict = (
-                    response.model_dump()
-                    if hasattr(response, "model_dump")
-                    else response
+            # Log provider call if conversation logging is enabled
+            if request_id:
+                conversation_logger.log_provider_call(
+                    request_id, provider_request, response_dict
                 )
 
-                # Log provider call if conversation logging is enabled
-                if request_id:
-                    conversation_logger.log_provider_call(
-                        request_id, provider_request, response_dict
-                    )
-
-                # Check for valid response with None-checking
-                if (
-                    response is None
-                    or not response.choices
-                    or response.choices[0].message.content is None
-                    or response.choices[0].finish_reason == "length"
-                ):
-                    logger.warning(f"Completion {i + 1}/3 truncated or empty, skipping")
-                    continue
-
-                completions.append(response.choices[0].message.content)
-                moa_completion_tokens += response.usage.completion_tokens
-                logger.debug(f"Generated completion {i + 1}/3")
-
-            except Exception as fallback_error:
-                logger.error(
-                    f"Error generating completion {i + 1}: {str(fallback_error)}"
+            # Check for valid response
+            if (
+                response is None
+                or not response.choices
+                or response.choices[0].message.content is None
+            ):
+                logger.warning(
+                    f"{agent_name}: Response was empty or invalid, skipping"
                 )
                 continue
 
-        if not completions:
-            logger.error("Failed to generate any completions")
-            return "Error: Could not generate any completions", 0
+            content = response.choices[0].message.content
+            completions.append(content)
+            moa_completion_tokens += response.usage.completion_tokens
+            logger.info(
+                f"{agent_name}: Generated response (temp={agent['temperature']}). Tokens: {response.usage.completion_tokens}"
+            )
 
-        logger.info(
-            f"Generated {len(completions)} completions using fallback method. Total tokens used: {moa_completion_tokens}"
-        )
+        except Exception as e:
+            logger.error(f"{agent_name}: Error generating response: {str(e)}")
+            continue
 
-    # Double-check we have at least one completion
     if not completions:
-        logger.error("No completions available for processing")
-        return "Error: Could not generate any completions", moa_completion_tokens
+        logger.error("Failed to generate any agent responses")
+        return "Error: Could not generate any agent responses", 0
 
-    # Handle case where fewer than 3 completions were generated
-    if len(completions) < 3:
-        original_count = len(completions)
-        logger.info(
-            f"Only generated {original_count} completions via n parameter, generating {3 - original_count} more"
-        )
-        # Generate additional completions one by one to reach 3 unique ones
-        for i in range(original_count, 3):
-            try:
-                provider_request = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": initial_query},
-                    ],
-                    "max_tokens": max_tokens,
-                    "temperature": 1,
-                }
-
-                response = optillm.safe_completions_create(client, provider_request)
-
-                # Convert response to dict for logging
-                response_dict = (
-                    response.model_dump()
-                    if hasattr(response, "model_dump")
-                    else response
-                )
-
-                # Log provider call if conversation logging is enabled
-                if request_id:
-                    conversation_logger.log_provider_call(
-                        request_id, provider_request, response_dict
-                    )
-
-                # Check for valid response with None-checking
-                if (
-                    response is None
-                    or not response.choices
-                    or response.choices[0].message.content is None
-                    or response.choices[0].finish_reason == "length"
-                ):
-                    logger.warning(f"Additional completion {i + 1}/3 truncated or empty, padding with first completion")
-                    completions.append(completions[0])
-                else:
-                    completions.append(response.choices[0].message.content)
-                    moa_completion_tokens += response.usage.completion_tokens
-                    logger.debug(f"Generated additional completion {i + 1}/3")
-
-            except Exception as e:
-                logger.warning(f"Error generating additional completion {i + 1}: {str(e)}")
-                # Pad with first completion on error
-                completions.append(completions[0])
-
-        logger.info(
-            f"Generated {len(completions)} total completions ({original_count} from n parameter, {3 - original_count} additional)"
+    if len(completions) < len(MOA_AGENTS):
+        logger.warning(
+            f"Only generated {len(completions)}/{len(MOA_AGENTS)} agent responses"
         )
 
-    logger.debug("Preparing critique prompt")
-    critique_prompt = f"""
-    Original query: {initial_query}
+    # Build critique prompt with agent labels
+    critique_sections = []
+    for i, (content, agent_name) in enumerate(zip(completions, agent_names)):
+        critique_sections.append(
+            f"""### {agent_name}'s Response:
+{content}"""
+        )
 
-    I will present you with three candidate responses to the original query. Please analyze and critique each response, discussing their strengths and weaknesses. Provide your analysis for each candidate separately.
+    critique_prompt = f"""You are a SYNTHESIZER agent in a Mixture of Agents system. Your task is to analyze and critique the responses from multiple specialized agents.
 
-    Candidate 1:
-    {completions[0]}
+Original Query: {initial_query}
 
-    Candidate 2:
-    {completions[1]}
+{''.join(critique_sections)}
 
-    Candidate 3:
-    {completions[2]}
+## Your Analysis
 
-    Please provide your critique for each candidate:
-    """
+For each agent's response above, provide:
+1. **Strengths**: What aspects of this response are valuable, insightful, or well-reasoned?
+2. **Weaknesses**: What is missing, flawed, or could be improved?
+3. **Unique Contribution**: What distinct perspective or insight does this agent bring?
 
-    logger.debug("Generating critiques")
+Then, provide a **Synthesis Assessment**:
+- Which elements from each response should be incorporated into a final answer?
+- What gaps remain that need to be addressed?
+- What would the ideal combined response look like?
+
+Be thorough and specific in your critique."""
+
+    logger.debug("Generating agent critique")
 
     provider_request = {
         "model": model,
@@ -223,9 +157,9 @@ def mixture_of_agents(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": critique_prompt},
         ],
-        "max_tokens": 512,
+        "max_tokens": 2048,  # Increased for meaningful critique
         "n": 1,
-        "temperature": 0.1,
+        "temperature": 0.3,
     }
 
     critique_response = optillm.safe_completions_create(client, provider_request)
@@ -243,7 +177,7 @@ def mixture_of_agents(
             request_id, provider_request, response_dict
         )
 
-    # Check for valid response with None-checking
+    # Check for valid response
     if (
         critique_response is None
         or not critique_response.choices
@@ -251,7 +185,7 @@ def mixture_of_agents(
         or critique_response.choices[0].finish_reason == "length"
     ):
         logger.warning("Critique response truncated or empty, using generic critique")
-        critiques = "All candidates show reasonable approaches to the problem."
+        critiques = f"Each of the {len(completions)} agent responses has been analyzed."
     else:
         critiques = critique_response.choices[0].message.content
 
@@ -260,28 +194,34 @@ def mixture_of_agents(
         f"Generated critiques. Tokens used: {critique_response.usage.completion_tokens}"
     )
 
-    logger.debug("Preparing final prompt")
-    final_prompt = f"""
-    Original query: {initial_query}
+    # Build final synthesis prompt
+    final_sections = []
+    for i, (content, agent_name) in enumerate(zip(completions, agent_names)):
+        final_sections.append(f"**{agent_name}:**\n{content}")
 
-    Based on the following candidate responses and their critiques, generate a final response to the original query.
+    final_prompt = f"""You are the FINAL SYNTHESIZER in a Mixture of Agents system. Your task is to create the best possible response to the original query by synthesizing insights from multiple specialized agents.
 
-    Candidate 1:
-    {completions[0]}
+## Original Query
+{initial_query}
 
-    Candidate 2:
-    {completions[1]}
+## Agent Responses
+{''.join(final_sections)}
 
-    Candidate 3:
-    {completions[2]}
+## Critique and Synthesis Guidance
+{critiques}
 
-    Critiques of all candidates:
-    {critiques}
+## Your Task
 
-    Please provide a final, optimized response to the original query:
-    """
+Create a final response that:
+1. **Synthesizes the best elements** from each agent's perspective
+2. **Addresses the critiques** - incorporate the improvements identified
+3. **Maintains the strengths** each agent brought (creativity, thoroughness, critical thinking)
+4. **Fills any gaps** the critique identified
+5. **Provides a clear, coherent answer** to the original query
 
-    logger.debug("Generating final response")
+Your response should be better than any single agent's response - that's the power of the Mixture of Agents approach."""
+
+    logger.debug("Generating final synthesized response")
 
     provider_request = {
         "model": model,
@@ -291,10 +231,9 @@ def mixture_of_agents(
         ],
         "max_tokens": max_tokens,
         "n": 1,
-        "temperature": 0.1,
+        "temperature": 0.5,
     }
 
-    # Use safe wrapper to ensure provider-specific normalization and sanitization
     final_response = optillm.safe_completions_create(client, provider_request)
 
     # Convert response to dict for logging
@@ -315,7 +254,7 @@ def mixture_of_agents(
         f"Generated final response. Tokens used: {final_response.usage.completion_tokens}"
     )
 
-    # Check for valid response with None-checking
+    # Check for valid response
     if (
         final_response is None
         or not final_response.choices
@@ -334,5 +273,7 @@ def mixture_of_agents(
     else:
         result = final_response.choices[0].message.content
 
-    logger.info(f"Total completion tokens used: {moa_completion_tokens}")
+    logger.info(
+        f"MOA complete: {len(completions)} agents, {moa_completion_tokens} total tokens"
+    )
     return result, moa_completion_tokens

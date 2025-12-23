@@ -159,10 +159,14 @@ def safe_completions_create(client, provider_request: dict):
             )
 
     if "zai" in client_type:
-        # Remove unsupported 'n'
+        # Z.ai requires 'n' via extra_body, not as top-level parameter
         if "n" in req:
-            logger.debug("Stripping unsupported 'n' for Z.ai provider")
-            req.pop("n", None)
+            n_value = req.pop("n")
+            extra_body = req.get("extra_body", {})
+            if isinstance(extra_body, dict):
+                extra_body["n"] = n_value
+                req["extra_body"] = extra_body
+                logger.debug(f"Moved 'n={n_value}' to extra_body for Z.ai provider")
 
     try:
         return client.chat.completions.create(**req)
