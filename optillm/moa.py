@@ -1,4 +1,6 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import optillm
 from optillm import conversation_logger
 
@@ -39,6 +41,33 @@ MOA_AGENTS = [
 ]
 
 
+def _generate_agent_response(client, model, system_prompt, initial_query, agent, max_tokens):
+    """Generate response for a single MOA agent (thread-safe)."""
+    agent_name = agent["title"]
+    agent_system = system_prompt + agent["system_suffix"]
+
+    provider_request = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": agent_system},
+            {"role": "user", "content": initial_query},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": agent["temperature"],
+    }
+
+    response = optillm.safe_completions_create(client, provider_request)
+
+    return {
+        "name": agent_name,
+        "content": response.choices[0].message.content,
+        "tokens": response.usage.completion_tokens,
+        "response_dict": response.model_dump() if hasattr(response, "model_dump") else response,
+        "request": provider_request,
+        "temp": agent["temperature"],
+    }
+
+
 def mixture_of_agents(
     system_prompt: str,
     initial_query: str,
@@ -60,57 +89,32 @@ def mixture_of_agents(
 
     logger.debug("Generating agent responses with distinct personalities")
 
-    # Generate responses from each distinct agent
-    for agent in MOA_AGENTS:
-        agent_name = agent["title"]
-        agent_names.append(agent_name)
-        agent_system = system_prompt + agent["system_suffix"]
+    # Generate responses from each distinct agent in parallel
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_generate_agent_response, client, model, system_prompt,
+                            initial_query, agent, max_tokens): agent
+            for agent in MOA_AGENTS
+        }
 
-        try:
-            provider_request = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": agent_system},
-                    {"role": "user", "content": initial_query},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": agent["temperature"],
-            }
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                agent_names.append(result["name"])
+                completions.append(result["content"])
 
-            response = optillm.safe_completions_create(client, provider_request)
+                if request_id:
+                    conversation_logger.log_provider_call(
+                        request_id, result["request"], result["response_dict"]
+                    )
 
-            # Convert response to dict for logging
-            response_dict = (
-                response.model_dump() if hasattr(response, "model_dump") else response
-            )
+                moa_completion_tokens += result["tokens"]
+                logger.info(f'{result["name"]}: Generated response (temp={result["temp"]}). Tokens: {result["tokens"]}')
 
-            # Log provider call if conversation logging is enabled
-            if request_id:
-                conversation_logger.log_provider_call(
-                    request_id, provider_request, response_dict
-                )
-
-            # Check for valid response
-            if (
-                response is None
-                or not response.choices
-                or response.choices[0].message.content is None
-            ):
-                logger.warning(
-                    f"{agent_name}: Response was empty or invalid, skipping"
-                )
+            except Exception as e:
+                agent = futures[future]
+                logger.error(f"{agent['title']}: Error generating response: {str(e)}")
                 continue
-
-            content = response.choices[0].message.content
-            completions.append(content)
-            moa_completion_tokens += response.usage.completion_tokens
-            logger.info(
-                f"{agent_name}: Generated response (temp={agent['temperature']}). Tokens: {response.usage.completion_tokens}"
-            )
-
-        except Exception as e:
-            logger.error(f"{agent_name}: Error generating response: {str(e)}")
-            continue
 
     if not completions:
         logger.error("Failed to generate any agent responses")

@@ -1,4 +1,6 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import optillm
 from optillm import conversation_logger
 
@@ -11,6 +13,30 @@ BON_TEMPERATURES = [
     0.6,   # Balanced - good tradeoff
     0.3,   # Precise - focused, deterministic
 ]
+
+
+def _generate_bon_candidate(client, model, system_prompt, initial_query, max_tokens, temp, index):
+    """Generate a single BON candidate (thread-safe)."""
+    provider_request = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": initial_query},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temp,
+    }
+
+    response = optillm.safe_completions_create(client, provider_request)
+
+    return {
+        "index": index,
+        "temp": temp,
+        "content": response.choices[0].message.content,
+        "tokens": response.usage.completion_tokens,
+        "response_dict": response.model_dump() if hasattr(response, "model_dump") else response,
+        "request": provider_request,
+    }
 
 
 def best_of_n_sampling(
@@ -51,53 +77,35 @@ def best_of_n_sampling(
 
     logger.debug(f"Generating {n} candidates with diverse temperatures")
 
-    # Generate candidates with diverse temperatures
-    for i in range(n):
-        # Cycle through temperatures if n > predefined list
-        temp = BON_TEMPERATURES[i % len(BON_TEMPERATURES)]
-        temperatures_used.append(temp)
-
-        try:
-            provider_request = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": initial_query},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temp,
-            }
-
-            response = optillm.safe_completions_create(client, provider_request)
-
-            # Log provider call
-            if request_id:
-                response_dict = (
-                    response.model_dump() if hasattr(response, "model_dump") else response
-                )
-                conversation_logger.log_provider_call(
-                    request_id, provider_request, response_dict
-                )
-
-            # Check for valid response
-            if (
-                response is None
-                or not response.choices
-                or response.choices[0].message.content is None
-            ):
-                logger.warning(f"Candidate {i + 1}/{n} (temp={temp}): Empty response, skipping")
-                continue
-
-            content = response.choices[0].message.content
-            completions.append(content)
-            bon_completion_tokens += response.usage.completion_tokens
-            logger.info(
-                f"Candidate {i + 1}/{n} (temp={temp}): Generated. Tokens: {response.usage.completion_tokens}"
+    # Generate candidates with diverse temperatures in parallel
+    with ThreadPoolExecutor(max_workers=n) as executor:
+        futures = {}
+        for i in range(n):
+            temp = BON_TEMPERATURES[i % len(BON_TEMPERATURES)]
+            future = executor.submit(
+                _generate_bon_candidate, client, model, system_prompt,
+                initial_query, max_tokens, temp, i
             )
+            futures[future] = (i, temp)
 
-        except Exception as e:
-            logger.error(f"Candidate {i + 1}/{n} (temp={temp}): Error - {str(e)}")
-            continue
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                completions.append(result["content"])
+                temperatures_used.append(result["temp"])
+
+                if request_id:
+                    conversation_logger.log_provider_call(
+                        request_id, result["request"], result["response_dict"]
+                    )
+
+                bon_completion_tokens += result["tokens"]
+                logger.info(f'Candidate {result["index"] + 1}/{n} (temp={result["temp"]}): Generated. Tokens: {result["tokens"]}')
+
+            except Exception as e:
+                idx, temp = futures[future]
+                logger.error(f"Candidate {idx + 1}/{n} (temp={temp}): Error - {str(e)}")
+                continue
 
     if not completions:
         logger.error("Failed to generate any candidates")
