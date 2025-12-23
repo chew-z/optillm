@@ -16,14 +16,14 @@ services:
             - .env
         environment:
             # OPENAI_API_KEY: ${OPENAI_API_KEY:-""}
-            ZAI_API_KEY: ${ZAI_API_KEY:-""}
+            ZAI_API_KEY: ${ZAI_API_KEY}
             ZAI_BASE_URL: ${ZAI_BASE_URL:-"https://api.z.ai/api/coding/paas/v4"}
             OPTILLM_PORT: ${OPTILLM_PORT:-8000}
             # OPTILLM_BASE_URL: ${OPENAI_BASE_URL:-"https://api.z.ai/api/coding/paas/v4"} # can be set to any OpenAI API compatible endpoint
             # OPTILLM_API_KEY: ${OPTILLM_API_KEY:-} # optionally sets an API key for Optillm clients
             # Uncomment and set values for other arguments (prefixed with OPTILLM_) as needed, e.g.:
             # OPTILLM_APPROACH: auto
-            OPTILLM_MODEL: glm-4.6
+            OPTILLM_MODEL: glm-4.7
             # OPTILLM_SIMULATIONS: 2
             # OPTILLM_EXPLORATION: 0.2
             # OPTILLM_DEPTH: 1
@@ -37,7 +37,7 @@ services:
         stop_grace_period: 2s
         healthcheck:
             test: ['CMD', 'curl', '-f', 'http://127.0.0.1:${OPTILLM_PORT:-8000}/health']
-            interval: 30s
+            interval: 60s
             timeout: 5s
             retries: 3
             start_period: 3s

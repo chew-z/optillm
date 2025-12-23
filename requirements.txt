@@ -29,6 +29,11 @@ gradio<5.16.0
 spacy<3.8.0
 cerebras_cloud_sdk
 outlines[transformers]>=1.2.3
+z3-solver
+sympy
+math_verify
+zai-sdk>=0.2.0
+outlines[transformers]>=1.2.3
 sentencepiece
 adaptive-classifier
 datasets

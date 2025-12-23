@@ -114,10 +114,14 @@ def get_config():
         base_url = server_config["base_url"]
         if base_url != "":
             logger.info(f"Using Z.ai base_url: {base_url}")
-            default_client = ZaiClient(api_key=API_KEY, base_url=base_url)
+            default_client = ZaiClient(
+                api_key=API_KEY, base_url=base_url, max_retries=0
+            )
             logger.info("Created Z.ai client")
         else:
-            default_client = ZaiClient(api_key=API_KEY, base_url=ZAI_BASE_URL)
+            default_client = ZaiClient(
+                api_key=API_KEY, base_url=ZAI_BASE_URL, max_retries=0
+            )
             logger.info("Created Z.ai client")
     elif os.environ.get("OPENAI_API_KEY"):
         API_KEY = os.environ.get("OPENAI_API_KEY")
