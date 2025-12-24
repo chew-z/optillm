@@ -53,7 +53,7 @@ MOA_AGENTS = [
             "Question assumptions and highlight what might go wrong or what's being overlooked."
         ),
         "temperature": 0.5,
-        "model": "zai/glm-4.7",
+        "model": "openrouter/anthropic/claude-haiku-4.5",
     },
 ]
 
@@ -199,27 +199,26 @@ Be thorough and specific in your critique."""
 
     logger.debug("Generating agent critique")
 
-    # Determine provider info for logging
-    client_type = type(client).__name__
-    provider_info = f"Direct ({client_type})" if "Zai" in client_type or "OpenAI" in client_type else "LiteLLM"
+    # Use LiteLLM client for SYNTHESIZER with Gemini via OpenRouter
+    synthesizer_client = _get_litellm_client()
+    synthesizer_model = "openrouter/google/gemini-3-flash-preview"
 
     provider_request = {
-        "model": model,
+        "model": synthesizer_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": critique_prompt},
         ],
         "max_tokens": 8192,  # Increased for comprehensive critique
-        "n": 1,
         "temperature": 0.3,
     }
 
     logger.info(
-        f"SYNTHESIZER (critique): Using model='{model}' via {provider_info}, "
+        f"SYNTHESIZER (critique): Using model='{synthesizer_model}' via OpenRouter (via LiteLLM), "
         f"max_tokens=8192, temperature=0.3"
     )
 
-    critique_response = optillm.safe_completions_create(client, provider_request)
+    critique_response = optillm.safe_completions_create(synthesizer_client, provider_request)
 
     # Convert response to dict for logging
     response_dict = (
@@ -280,23 +279,24 @@ Your response should be better than any single agent's response - that's the pow
 
     logger.debug("Generating final synthesized response")
 
+    # Use LiteLLM client for SYNTHESIZER with Gemini via OpenRouter
+    # Reuse the same client and model from critique stage
     provider_request = {
-        "model": model,
+        "model": synthesizer_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": final_prompt},
         ],
         "max_tokens": max_tokens,
-        "n": 1,
         "temperature": 0.5,
     }
 
     logger.info(
-        f"SYNTHESIZER (final): Using model='{model}' via {provider_info}, "
+        f"SYNTHESIZER (final): Using model='{synthesizer_model}' via OpenRouter (via LiteLLM), "
         f"max_tokens={max_tokens}, temperature=0.5"
     )
 
-    final_response = optillm.safe_completions_create(client, provider_request)
+    final_response = optillm.safe_completions_create(synthesizer_client, provider_request)
 
     # Convert response to dict for logging
     response_dict = (

@@ -6,32 +6,83 @@ from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)
 
-# Diverse sampling strategies for BON - different temperatures for variety
-BON_TEMPERATURES = [
-    1.2,   # Highly exploratory - more creative, diverse outputs
-    0.9,   # Balanced creative
-    0.6,   # Balanced - good tradeoff
-    0.3,   # Precise - focused, deterministic
+# Lazy-loaded LiteLLM client for OpenRouter models
+_litellm_client = None
+
+
+def _get_litellm_client():
+    """Get or create the LiteLLM client for OpenRouter models (thread-safe singleton)."""
+    global _litellm_client
+    if _litellm_client is None:
+        from optillm.litellm_wrapper import LiteLLMWrapper
+        _litellm_client = LiteLLMWrapper()
+        logger.info("BON: Created LiteLLM client for OpenRouter models")
+    return _litellm_client
+
+
+# Diverse candidates for BON - different models via OpenRouter for speed and variety
+BON_CANDIDATES = [
+    {
+        "name": "GEMINI_EXPLORATORY",
+        "model": "openrouter/google/gemini-3-flash-preview",
+        "temperature": 1.0,
+    },
+    {
+        "name": "GPT_CREATIVE",
+        "model": "openrouter/openai/gpt-5.2-chat",
+        "temperature": 0.8,
+    },
+    {
+        "name": "HAIKU_BALANCED",
+        "model": "openrouter/anthropic/claude-haiku-4.5",
+        "temperature": 0.6,
+    },
+    {
+        "name": "GEMINI_PRECISE",
+        "model": "openrouter/google/gemini-3-flash-preview",
+        "temperature": 0.3,
+    },
 ]
 
 
-def _generate_bon_candidate(client, model, system_prompt, initial_query, max_tokens, temp, index):
-    """Generate a single BON candidate (thread-safe)."""
+def _generate_bon_candidate(client, default_model, system_prompt, initial_query, max_tokens, candidate, index):
+    """Generate a single BON candidate (thread-safe) with multi-model support."""
+    candidate_name = candidate["name"]
+    candidate_model = candidate.get("model", default_model)
+    candidate_temp = candidate["temperature"]
+
+    # Route to appropriate client based on model prefix
+    # OpenRouter models go through LiteLLM, others use the default client (e.g., Z.ai)
+    if candidate_model.startswith("openrouter/"):
+        agent_client = _get_litellm_client()
+        provider = "OpenRouter (via LiteLLM)"
+    else:
+        agent_client = client
+        provider = f"Direct ({type(client).__name__})"
+
+    # Log the candidate configuration
+    logger.info(
+        f"{candidate_name}: Using model='{candidate_model}' via {provider}, "
+        f"temperature={candidate_temp}, max_tokens={max_tokens}"
+    )
+
     provider_request = {
-        "model": model,
+        "model": candidate_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": initial_query},
         ],
         "max_tokens": max_tokens,
-        "temperature": temp,
+        "temperature": candidate_temp,
     }
 
-    response = optillm.safe_completions_create(client, provider_request)
+    response = optillm.safe_completions_create(agent_client, provider_request)
 
     return {
         "index": index,
-        "temp": temp,
+        "name": candidate_name,
+        "model": candidate_model,
+        "temp": candidate_temp,
         "content": response.choices[0].message.content,
         "tokens": response.usage.completion_tokens,
         "response_dict": response.model_dump() if hasattr(response, "model_dump") else response,
@@ -73,26 +124,26 @@ def best_of_n_sampling(
         max_tokens = request_config.get("max_tokens", max_tokens)
 
     completions = []
-    temperatures_used = []
+    candidate_names = []
 
-    logger.debug(f"Generating {n} candidates with diverse temperatures")
+    logger.debug(f"Generating {n} candidates with diverse models via OpenRouter")
 
-    # Generate candidates with diverse temperatures in parallel
+    # Generate candidates with diverse models in parallel
     with ThreadPoolExecutor(max_workers=n) as executor:
         futures = {}
         for i in range(n):
-            temp = BON_TEMPERATURES[i % len(BON_TEMPERATURES)]
+            candidate = BON_CANDIDATES[i % len(BON_CANDIDATES)]
             future = executor.submit(
                 _generate_bon_candidate, client, model, system_prompt,
-                initial_query, max_tokens, temp, i
+                initial_query, max_tokens, candidate, i
             )
-            futures[future] = (i, temp)
+            futures[future] = (i, candidate["name"])
 
         for future in as_completed(futures):
             try:
                 result = future.result()
                 completions.append(result["content"])
-                temperatures_used.append(result["temp"])
+                candidate_names.append(result["name"])
 
                 if request_id:
                     conversation_logger.log_provider_call(
@@ -100,11 +151,11 @@ def best_of_n_sampling(
                     )
 
                 bon_completion_tokens += result["tokens"]
-                logger.info(f'Candidate {result["index"] + 1}/{n} (temp={result["temp"]}): Generated. Tokens: {result["tokens"]}')
+                logger.info(f'{result["name"]}: Generated candidate {result["index"] + 1}/{n}. Tokens: {result["tokens"]}')
 
             except Exception as e:
-                idx, temp = futures[future]
-                logger.error(f"Candidate {idx + 1}/{n} (temp={temp}): Error - {str(e)}")
+                idx, name = futures[future]
+                logger.error(f"{name}: Error generating candidate {idx + 1}/{n}: {str(e)}")
                 continue
 
     if not completions:
@@ -114,14 +165,14 @@ def best_of_n_sampling(
     if len(completions) < n:
         logger.warning(f"Only generated {len(completions)}/{n} candidates")
 
-    # Batch rate all candidates in a single LLM call
-    logger.debug("Batch rating candidates")
+    # Batch rate all candidates using OpenRouter
+    logger.debug("Batch rating candidates via OpenRouter")
 
     # Build the rating prompt with all candidates
     candidates_text = ""
-    for i, completion in enumerate(completions, 1):
+    for i, (completion, name) in enumerate(zip(completions, candidate_names), 1):
         candidates_text += f"""
-### Candidate {i} (temperature={temperatures_used[i-1]}):
+### Candidate {i} ({name}):
 {completion}
 
 """
@@ -160,18 +211,26 @@ RANKING: [Candidate numbers in order, best first]
 
 Be thorough and objective in your assessment."""
 
+    # Use LiteLLM with Gemini for fast batch rating via OpenRouter
+    rating_client = _get_litellm_client()
+    rating_model = "openrouter/google/gemini-3-flash-preview"
+
     provider_request = {
-        "model": model,
+        "model": rating_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": rating_prompt},
         ],
         "max_tokens": 2048,
-        "n": 1,
         "temperature": 0.2,
     }
 
-    rating_response = optillm.safe_completions_create(client, provider_request)
+    logger.info(
+        f"BATCH RATER: Using model='{rating_model}' via OpenRouter (via LiteLLM), "
+        f"max_tokens=2048, temperature=0.2"
+    )
+
+    rating_response = optillm.safe_completions_create(rating_client, provider_request)
 
     # Log provider call
     if request_id:
@@ -216,7 +275,7 @@ Be thorough and objective in your assessment."""
         top_candidates_text = ""
         for rank, idx in enumerate(top_indices, 1):
             top_candidates_text += f"""
-### Top Candidate {rank} (temperature={temperatures_used[idx]}, original rank {idx + 1}):
+### Top Candidate {rank} ({candidate_names[idx]}, original rank {idx + 1}):
 {completions[idx]}
 
 """
@@ -242,18 +301,26 @@ Create a final response that:
 
 Your synthesis should be better than the individual candidates - that's the advantage of Best-of-N with intelligent selection."""
 
+        # Use LiteLLM with Gemini for fast synthesis via OpenRouter
+        synthesis_client = _get_litellm_client()
+        synthesis_model = "openrouter/google/gemini-3-flash-preview"
+
         provider_request = {
-            "model": model,
+            "model": synthesis_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": synthesis_prompt},
             ],
             "max_tokens": max_tokens,
-            "n": 1,
             "temperature": 0.5,
         }
 
-        synthesis_response = optillm.safe_completions_create(client, provider_request)
+        logger.info(
+            f"SYNTHESIZER: Using model='{synthesis_model}' via OpenRouter (via LiteLLM), "
+            f"max_tokens={max_tokens}, temperature=0.5"
+        )
+
+        synthesis_response = optillm.safe_completions_create(synthesis_client, provider_request)
 
         # Log provider call
         if request_id:
