@@ -1,6 +1,5 @@
 import time
 import logging
-import sys
 import io
 import builtins
 from contextlib import redirect_stdout

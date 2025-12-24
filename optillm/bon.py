@@ -15,6 +15,7 @@ def _get_litellm_client():
     global _litellm_client
     if _litellm_client is None:
         from optillm.litellm_wrapper import LiteLLMWrapper
+
         _litellm_client = LiteLLMWrapper()
         logger.info("BON: Created LiteLLM client for OpenRouter models")
     return _litellm_client
@@ -45,7 +46,9 @@ BON_CANDIDATES = [
 ]
 
 
-def _generate_bon_candidate(client, default_model, system_prompt, initial_query, max_tokens, candidate, index):
+def _generate_bon_candidate(
+    client, default_model, system_prompt, initial_query, max_tokens, candidate, index
+):
     """Generate a single BON candidate (thread-safe) with multi-model support."""
     candidate_name = candidate["name"]
     candidate_model = candidate.get("model", default_model)
@@ -85,7 +88,9 @@ def _generate_bon_candidate(client, default_model, system_prompt, initial_query,
         "temp": candidate_temp,
         "content": response.choices[0].message.content,
         "tokens": response.usage.completion_tokens,
-        "response_dict": response.model_dump() if hasattr(response, "model_dump") else response,
+        "response_dict": (
+            response.model_dump() if hasattr(response, "model_dump") else response
+        ),
         "request": provider_request,
     }
 
@@ -134,8 +139,14 @@ def best_of_n_sampling(
         for i in range(n):
             candidate = BON_CANDIDATES[i % len(BON_CANDIDATES)]
             future = executor.submit(
-                _generate_bon_candidate, client, model, system_prompt,
-                initial_query, max_tokens, candidate, i
+                _generate_bon_candidate,
+                client,
+                model,
+                system_prompt,
+                initial_query,
+                max_tokens,
+                candidate,
+                i,
             )
             futures[future] = (i, candidate["name"])
 
@@ -151,11 +162,15 @@ def best_of_n_sampling(
                     )
 
                 bon_completion_tokens += result["tokens"]
-                logger.info(f'{result["name"]}: Generated candidate {result["index"] + 1}/{n}. Tokens: {result["tokens"]}')
+                logger.info(
+                    f'{result["name"]}: Generated candidate {result["index"] + 1}/{n}. Tokens: {result["tokens"]}'
+                )
 
             except Exception as e:
                 idx, name = futures[future]
-                logger.error(f"{name}: Error generating candidate {idx + 1}/{n}: {str(e)}")
+                logger.error(
+                    f"{name}: Error generating candidate {idx + 1}/{n}: {str(e)}"
+                )
                 continue
 
     if not completions:
@@ -320,7 +335,9 @@ Your synthesis should be better than the individual candidates - that's the adva
             f"max_tokens={max_tokens}, temperature=0.5"
         )
 
-        synthesis_response = optillm.safe_completions_create(synthesis_client, provider_request)
+        synthesis_response = optillm.safe_completions_create(
+            synthesis_client, provider_request
+        )
 
         # Log provider call
         if request_id:
@@ -368,16 +385,20 @@ def _parse_best_candidate(rating_text: str, num_candidates: int) -> int:
     import re
 
     # Try to find explicit ranking line
-    ranking_match = re.search(r'RANKING:\s*([\d,\s]+)', rating_text, re.IGNORECASE)
+    ranking_match = re.search(r"RANKING:\s*([\d,\s]+)", rating_text, re.IGNORECASE)
     if ranking_match:
-        ranks = [int(x.strip()) for x in ranking_match.group(1).split(',') if x.strip().isdigit()]
+        ranks = [
+            int(x.strip())
+            for x in ranking_match.group(1).split(",")
+            if x.strip().isdigit()
+        ]
         if ranks:
             best = ranks[0] - 1  # Convert to 0-indexed
             if 0 <= best < num_candidates:
                 return best
 
     # Try to find "Best: Candidate X"
-    best_match = re.search(r'Best.*?Candidate\s+(\d+)', rating_text, re.IGNORECASE)
+    best_match = re.search(r"Best.*?Candidate\s+(\d+)", rating_text, re.IGNORECASE)
     if best_match:
         best = int(best_match.group(1)) - 1
         if 0 <= best < num_candidates:
@@ -385,7 +406,7 @@ def _parse_best_candidate(rating_text: str, num_candidates: int) -> int:
 
     # Try to find highest score: "Candidate X: NN/20"
     scores = []
-    pattern = r'Candidate\s+(\d+):[^0-9]*(\d+)\s*/\s*20'
+    pattern = r"Candidate\s+(\d+):[^0-9]*(\d+)\s*/\s*20"
     for match in re.finditer(pattern, rating_text, re.IGNORECASE):
         idx = int(match.group(1)) - 1
         score = int(match.group(2))
@@ -407,9 +428,13 @@ def _parse_top_k_candidates(rating_text: str, num_candidates: int, k: int = 2) -
     indices = []
 
     # Try explicit ranking
-    ranking_match = re.search(r'RANKING:\s*([\d,\s]+)', rating_text, re.IGNORECASE)
+    ranking_match = re.search(r"RANKING:\s*([\d,\s]+)", rating_text, re.IGNORECASE)
     if ranking_match:
-        ranks = [int(x.strip()) - 1 for x in ranking_match.group(1).split(',') if x.strip().isdigit()]
+        ranks = [
+            int(x.strip()) - 1
+            for x in ranking_match.group(1).split(",")
+            if x.strip().isdigit()
+        ]
         for r in ranks:
             if 0 <= r < num_candidates and r not in indices:
                 indices.append(r)
@@ -418,7 +443,7 @@ def _parse_top_k_candidates(rating_text: str, num_candidates: int, k: int = 2) -
 
     # Try to find scores and pick top K
     scores = []
-    pattern = r'Candidate\s+(\d+):[^0-9]*(\d+)\s*/\s*20'
+    pattern = r"Candidate\s+(\d+):[^0-9]*(\d+)\s*/\s*20"
     for match in re.finditer(pattern, rating_text, re.IGNORECASE):
         idx = int(match.group(1)) - 1
         score = int(match.group(2))

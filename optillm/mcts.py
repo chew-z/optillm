@@ -4,7 +4,6 @@ from typing import List, Dict, Any
 
 import numpy as np
 import networkx as nx
-import optillm
 from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)

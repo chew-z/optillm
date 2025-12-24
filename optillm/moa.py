@@ -15,6 +15,7 @@ def _get_litellm_client():
     global _litellm_client
     if _litellm_client is None:
         from optillm.litellm_wrapper import LiteLLMWrapper
+
         _litellm_client = LiteLLMWrapper()
         logger.info("MOA: Created LiteLLM client for OpenRouter models")
     return _litellm_client
@@ -58,7 +59,9 @@ MOA_AGENTS = [
 ]
 
 
-def _generate_agent_response(client, default_model, system_prompt, initial_query, agent, max_tokens):
+def _generate_agent_response(
+    client, default_model, system_prompt, initial_query, agent, max_tokens
+):
     """Generate response for a single MOA agent (thread-safe)."""
     agent_name = agent["title"]
     agent_system = system_prompt + agent["system_suffix"]
@@ -105,7 +108,9 @@ def _generate_agent_response(client, default_model, system_prompt, initial_query
         "name": agent_name,
         "content": response.choices[0].message.content,
         "tokens": response.usage.completion_tokens,
-        "response_dict": response.model_dump() if hasattr(response, "model_dump") else response,
+        "response_dict": (
+            response.model_dump() if hasattr(response, "model_dump") else response
+        ),
         "request": provider_request,
         "temp": agent["temperature"],
     }
@@ -136,8 +141,15 @@ def mixture_of_agents(
     # Generate responses from each distinct agent in parallel
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
-            executor.submit(_generate_agent_response, client, model, system_prompt,
-                            initial_query, agent, max_tokens): agent
+            executor.submit(
+                _generate_agent_response,
+                client,
+                model,
+                system_prompt,
+                initial_query,
+                agent,
+                max_tokens,
+            ): agent
             for agent in MOA_AGENTS
         }
 
@@ -153,7 +165,9 @@ def mixture_of_agents(
                     )
 
                 moa_completion_tokens += result["tokens"]
-                logger.info(f'{result["name"]}: Generated response (temp={result["temp"]}). Tokens: {result["tokens"]}')
+                logger.info(
+                    f'{result["name"]}: Generated response (temp={result["temp"]}). Tokens: {result["tokens"]}'
+                )
 
             except Exception as e:
                 agent = futures[future]
@@ -218,7 +232,9 @@ Be thorough and specific in your critique."""
         f"max_tokens=8192, temperature=0.3"
     )
 
-    critique_response = optillm.safe_completions_create(synthesizer_client, provider_request)
+    critique_response = optillm.safe_completions_create(
+        synthesizer_client, provider_request
+    )
 
     # Convert response to dict for logging
     response_dict = (
@@ -296,7 +312,9 @@ Your response should be better than any single agent's response - that's the pow
         f"max_tokens={max_tokens}, temperature=0.5"
     )
 
-    final_response = optillm.safe_completions_create(synthesizer_client, provider_request)
+    final_response = optillm.safe_completions_create(
+        synthesizer_client, provider_request
+    )
 
     # Convert response to dict for logging
     response_dict = (
@@ -336,7 +354,11 @@ Your response should be better than any single agent's response - that's the pow
         result = final_response.choices[0].message.content
 
     # Log snippet of the final result
-    result_preview = result[:200].replace('\n', ' ') + '...' if len(result) > 200 else result.replace('\n', ' ')
+    result_preview = (
+        result[:200].replace("\n", " ") + "..."
+        if len(result) > 200
+        else result.replace("\n", " ")
+    )
     logger.info(f"Final result snippet: {result_preview}")
 
     logger.info(

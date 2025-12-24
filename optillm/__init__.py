@@ -108,7 +108,11 @@ def _normalize_model_for_provider(model: str, client) -> str:
 
     # Preserve multi-part provider prefixes for LiteLLM (e.g., 'openrouter/google/gemini-2.5-flash')
     # These should be passed through as-is since LiteLLM handles the routing
-    if normalized.startswith("openrouter/") or normalized.startswith("anthropic/") or normalized.startswith("cohere/"):
+    if (
+        normalized.startswith("openrouter/")
+        or normalized.startswith("anthropic/")
+        or normalized.startswith("cohere/")
+    ):
         # Keep the full model string for LiteLLM routing
         pass
     # If there's a slash, keep the rightmost segment (handles 'moa-zai/glm-4.6', 'zai/glm-4.6', etc.)
