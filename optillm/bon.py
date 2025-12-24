@@ -1,16 +1,55 @@
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import optillm
 from optillm import conversation_logger
+from optillm.config_loader import load_complex_profile
 
 logger = logging.getLogger(__name__)
 
+# BON requires six role entries per configuration:
+#   - First four drive candidate generation
+#   - QUALITY_RATER scores the candidates
+#   - FINAL_SYNTHESIZER optionally combines top results
+BON_REQUIRED_ROLE_NAMES = [
+    "CREATIVE",
+    "ANALYST",
+    "CRITIC",
+    "SYNTHESIZER",
+    "QUALITY_RATER",
+    "FINAL_SYNTHESIZER",
+]
+BON_GENERATION_ROLE_COUNT = 4
+DEFAULT_REASONING_EFFORT = "high"
+
 # Lazy-loaded LiteLLM client for OpenRouter models
 _litellm_client = None
+
+
+def _validate_bon_profile(config: List[Dict[str, Any]]) -> bool:
+    """Ensure a profile defines all required BON roles."""
+
+    if len(config) < len(BON_REQUIRED_ROLE_NAMES):
+        logger.error(
+            "BON profile has %s roles but requires %s (%s)",
+            len(config),
+            len(BON_REQUIRED_ROLE_NAMES),
+            ", ".join(BON_REQUIRED_ROLE_NAMES),
+        )
+        return False
+
+    defined_names = {role.get("name") for role in config if isinstance(role, dict)}
+    missing = [name for name in BON_REQUIRED_ROLE_NAMES if name not in defined_names]
+    if missing:
+        logger.error(
+            "BON profile is missing required roles: %s",
+            ", ".join(missing),
+        )
+        return False
+
+    return True
 
 
 def _get_litellm_client():
@@ -22,31 +61,6 @@ def _get_litellm_client():
         _litellm_client = LiteLLMWrapper()
         logger.info("BON: Created LiteLLM client for OpenRouter models")
     return _litellm_client
-
-
-def _load_config_from_env(
-    approach: str, config_name: str
-) -> Optional[List[Dict[str, Any]]]:
-    """Load model configuration from environment variable.
-
-    Args:
-        approach: Either 'bon' or 'moa'
-        config_name: Configuration name (e.g., 'rapid', 'deep', 'coding')
-
-    Returns:
-        List of candidate/agent configurations, or None if not found
-    """
-    env_var = f"OPTILLM_{approach.upper()}_CONFIG_{config_name.upper()}"
-    config_json = os.environ.get(env_var)
-
-    if not config_json:
-        return None
-
-    try:
-        return json.loads(config_json)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse {env_var} as JSON")
-        return None
 
 
 def _get_role_by_name(
@@ -72,42 +86,6 @@ def _get_role_by_name(
         f"Role {role_name} not found in config, using default model {default_model}"
     )
     return {"name": role_name, "model": default_model, "reasoning_effort": "high"}
-
-
-# Fallback candidates for BON when no configuration is provided
-# Uses the "deep" configuration with diverse models and explanatory role names
-BON_CANDIDATES = [
-    {
-        "name": "CREATIVE",
-        "model": "openrouter/google/gemini-3-flash-preview",
-        "reasoning_effort": "high",
-    },
-    {
-        "name": "ANALYST",
-        "model": "openrouter/openai/gpt-5.2-chat",
-        "reasoning_effort": "high",
-    },
-    {
-        "name": "CRITIC",
-        "model": "openrouter/anthropic/claude-haiku-4.5",
-        "reasoning_effort": "high",
-    },
-    {
-        "name": "SYNTHESIZER",
-        "model": "openrouter/google/gemini-3-flash-preview",
-        "reasoning_effort": "high",
-    },
-    {
-        "name": "QUALITY_RATER",
-        "model": "openrouter/google/gemini-3-flash-preview",
-        "reasoning_effort": "high",
-    },
-    {
-        "name": "FINAL_SYNTHESIZER",
-        "model": "openrouter/google/gemini-3-flash-preview",
-        "reasoning_effort": "high",
-    },
-]
 
 
 def _generate_bon_candidate(
@@ -159,6 +137,87 @@ def _generate_bon_candidate(
     }
 
 
+def _determine_default_model(preferred_model: Optional[str]) -> str:
+    """Return the model identifier to use when a role leaves it unspecified."""
+
+    if (
+        preferred_model
+        and preferred_model not in {"auto", "none"}
+        and not preferred_model.startswith("pre-")
+    ):
+        return preferred_model
+    return os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
+
+
+def _build_homogeneous_bon_config(model: str) -> List[Dict[str, Any]]:
+    """Create a BON configuration where every role shares the same model."""
+
+    return [
+        {
+            "name": role_name,
+            "model": model,
+            "reasoning_effort": DEFAULT_REASONING_EFFORT,
+        }
+        for role_name in BON_REQUIRED_ROLE_NAMES
+    ]
+
+
+def _resolve_bon_candidates(
+    model: Optional[str], n: int
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Resolve the BON configuration to use, falling back to homogeneous roles.
+
+    Returns the full role list (always 6 entries) and the default model that
+    should be used if a specific role omits a model.
+    """
+
+    config_name = None
+    resolved_config = None
+
+    if model:
+        force_predefined = model.startswith("pre-")
+        candidate_key = model[4:] if force_predefined else model
+        resolved_config = load_complex_profile("bon", candidate_key)
+        if resolved_config and not _validate_bon_profile(resolved_config):
+            resolved_config = None
+
+        if resolved_config:
+            config_name = candidate_key
+            logger.info("BON: Using complex profile '%s'", config_name)
+        elif force_predefined:
+            logger.warning(
+                "BON: Requested complex profile '%s' not found; falling back to default roles",
+                candidate_key,
+            )
+
+    if resolved_config:
+        default_model = _determine_default_model(None)
+        return resolved_config, default_model
+
+    default_model = _determine_default_model(model)
+    if n < BON_GENERATION_ROLE_COUNT:
+        logger.warning(
+            "BON: Requested n=%s is less than required %s generation roles; "
+            "results will reuse role definitions.",
+            n,
+            BON_GENERATION_ROLE_COUNT,
+        )
+
+    homogeneous = _build_homogeneous_bon_config(default_model)
+    if not model or model in {"auto", "none"}:
+        logger.info(
+            "BON: No model specified, using default OPTILLM_MODEL: %s",
+            default_model,
+        )
+    else:
+        logger.info(
+            "BON: Using model '%s' for all %d BON roles",
+            default_model,
+            len(homogeneous),
+        )
+    return homogeneous, default_model
+
+
 def best_of_n_sampling(
     system_prompt: str,
     initial_query: str,
@@ -192,45 +251,10 @@ def best_of_n_sampling(
     if request_config:
         max_tokens = request_config.get("max_tokens", max_tokens)
 
-    # Determine configuration from model parameter
-    # Note: parse_combined_approach() already stripped the "bon-" prefix
-    # So model="rapid" for "bon-rapid", or model="pre-rapid" for "bon-pre-rapid"
-    config_name = None
+    bon_config, default_model = _resolve_bon_candidates(model, n)
 
-    # Check for "pre-" prefix indicating predefined config
-    if model.startswith("pre-"):
-        config_name = model[4:]  # Extract config name after "pre-"
-    else:
-        # Check if model name itself is a known config name
-        candidates = _load_config_from_env("bon", model)
-        if candidates:
-            config_name = model
-
-    # Use configuration if found, otherwise use single model for all candidates
-    if config_name:
-        BON_CANDIDATES_LOCAL = _load_config_from_env("bon", config_name)
-        logger.info(f"BON: Using predefined config '{config_name}'")
-    else:
-        # Use the specified model, or fall back to default if not provided/invalid
-        if not model or model in ["auto", "none"]:
-            model = os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
-            logger.info(
-                f"BON: No model specified, using default OPTILLM_MODEL: {model}"
-            )
-
-        # Create homogeneous candidates using the specified model
-        BON_CANDIDATES_LOCAL = [
-            {
-                "name": f"CANDIDATE_{i}",
-                "model": model,
-                "reasoning_effort": "high",
-            }
-            for i in range(n)
-        ]
-        logger.info(f"BON: Using model '{model}' for all {n} candidates")
-
-    # Extract first 4 entries for candidate generation (config may have 6 total)
-    candidates_for_generation = BON_CANDIDATES_LOCAL[:4]
+    # Extract first 4 entries for candidate generation (config always has 6 total)
+    candidates_for_generation = bon_config[:BON_GENERATION_ROLE_COUNT]
 
     completions = []
     candidate_names = []
@@ -245,7 +269,7 @@ def best_of_n_sampling(
             future = executor.submit(
                 _generate_bon_candidate,
                 client,
-                model,
+                default_model,
                 system_prompt,
                 initial_query,
                 max_tokens,
@@ -267,7 +291,7 @@ def best_of_n_sampling(
 
                 bon_completion_tokens += result["tokens"]
                 logger.info(
-                    f'{result["name"]}: Generated candidate {result["index"] + 1}/{n} (effort={result["effort"]}). Tokens: {result["tokens"]}'
+                    f"{result['name']}: Generated candidate {result['index'] + 1}/{n} (effort={result['effort']}). Tokens: {result['tokens']}"
                 )
 
             except Exception as e:
@@ -288,7 +312,7 @@ def best_of_n_sampling(
     logger.debug("Batch rating candidates")
 
     # Get QUALITY_RATER configuration
-    quality_rater = _get_role_by_name(BON_CANDIDATES_LOCAL, "QUALITY_RATER")
+    quality_rater = _get_role_by_name(bon_config, "QUALITY_RATER", default_model)
     rating_model = quality_rater.get(
         "model", "openrouter/google/gemini-3-flash-preview"
     )
@@ -402,7 +426,9 @@ Be thorough and objective in your assessment."""
         logger.debug(f"Synthesizing top {len(top_indices)} candidates")
 
         # Get FINAL_SYNTHESIZER configuration
-        final_synthesizer = _get_role_by_name(BON_CANDIDATES_LOCAL, "FINAL_SYNTHESIZER")
+        final_synthesizer = _get_role_by_name(
+            bon_config, "FINAL_SYNTHESIZER", default_model
+        )
         synthesis_model = final_synthesizer.get(
             "model", "openrouter/google/gemini-3-flash-preview"
         )

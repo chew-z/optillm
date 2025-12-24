@@ -219,7 +219,7 @@ server_config = {
     "mcts_simulations": 2,
     "mcts_exploration": 0.2,
     "mcts_depth": 1,
-    "best_of_n": 3,
+    "best_of_n": 4,
     "model": "gpt-4o-mini",
     "rstar_max_depth": 3,
     "rstar_num_rollouts": 5,
@@ -1517,7 +1517,7 @@ def parse_args():
                 parser.add_argument(arg, type=type_, default=default, help=help_text)
 
     # Special handling for best_of_n to support both formats
-    best_of_n_default = int(os.environ.get("OPTILLM_BEST_OF_N", 3))
+    best_of_n_default = int(os.environ.get("OPTILLM_BEST_OF_N", 4))
     parser.add_argument(
         "--best-of-n",
         "--best_of_n",

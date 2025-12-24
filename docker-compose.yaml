@@ -34,16 +34,11 @@ services:
             # OPTILLM_RSTAR_C: 1.4
             # OPTILLM_N: 1
             # OPTILLM_RETURN_FULL_RESPONSE: false
-            # BON and MOA Configurations (loaded from .env file via env_file above)
-            # Available complex models: rapid, deep, coding
-            # Usage: model="bon-rapid", model="moa-deep", model="bon-coding", etc.
-            # These variables can also be set directly here to override .env values:
-            # OPTILLM_BON_CONFIG_RAPID: ${OPTILLM_BON_CONFIG_RAPID}
-            # OPTILLM_BON_CONFIG_DEEP: ${OPTILLM_BON_CONFIG_DEEP}
-            # OPTILLM_BON_CONFIG_CODING: ${OPTILLM_BON_CONFIG_CODING}
-            # OPTILLM_MOA_CONFIG_RAPID: ${OPTILLM_MOA_CONFIG_RAPID}
-            # OPTILLM_MOA_CONFIG_DEEP: ${OPTILLM_MOA_CONFIG_DEEP}
-            # OPTILLM_MOA_CONFIG_CODING: ${OPTILLM_MOA_CONFIG_CODING}
+            # BON and MOA complex profiles (JSON)
+            # Available complex models: rapid, deep, coding (see optillm/config/*.json)
+            # Override the config file paths here if you store them elsewhere:
+            # OPTILLM_BON_CONFIG_FILE: ${OPTILLM_BON_CONFIG_FILE:-./optillm/config/bon_profiles.json}
+            # OPTILLM_MOA_CONFIG_FILE: ${OPTILLM_MOA_CONFIG_FILE:-./optillm/config/moa_profiles.json}
         restart: on-failure
         stop_grace_period: 2s
         healthcheck:

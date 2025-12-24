@@ -1,15 +1,76 @@
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import optillm
 from optillm import conversation_logger
+from optillm.config_loader import load_complex_profile
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded LiteLLM client for OpenRouter models
+# MOA requires five role entries per configuration:
+#   - First three generate candidate reasoning traces
+#   - SYNTHESIZER critiques the agents
+#   - FINAL_SYNTHESIZER produces the final response
+MOA_REQUIRED_ROLE_NAMES = [
+    "CREATIVE",
+    "ANALYST",
+    "CRITIC",
+    "SYNTHESIZER",
+    "FINAL_SYNTHESIZER",
+]
+MOA_GENERATION_ROLE_COUNT = 3
+DEFAULT_REASONING_EFFORT = "high"
+
+_ROLE_TEMPLATES = [
+    {
+        "name": "creative",
+        "title": "CREATIVE",
+        "system_suffix": (
+            " You are a CREATIVE agent in a Mixture of Agents system.\n"
+            "Your role: Think creatively, consider unconventional approaches, and generate diverse solutions.\n"
+            "Embrace brainstorming and explore multiple angles even if they seem unusual at first."
+        ),
+    },
+    {
+        "name": "analyst",
+        "title": "ANALYST",
+        "system_suffix": (
+            " You are an ANALYST agent in a Mixture of Agents system.\n"
+            "Your role: Be methodical, thorough, and systematic. Break down the problem step by step.\n"
+            "Focus on logical structure, clear reasoning, and comprehensive coverage of the problem space."
+        ),
+    },
+    {
+        "name": "critic",
+        "title": "CRITIC",
+        "system_suffix": (
+            " You are a CRITIC agent in a Mixture of Agents system.\n"
+            "Your role: Be skeptical and identify potential weaknesses, edge cases, and failure modes.\n"
+            "Question assumptions and highlight what might go wrong or what's being overlooked."
+        ),
+    },
+    {
+        "name": "synthesizer",
+        "title": "SYNTHESIZER",
+        "system_suffix": (
+            " You are a SYNTHESIZER agent in a Mixture of Agents system.\n"
+            "Your role: Analyze and critique the responses from multiple specialized agents.\n"
+            "Provide strengths, weaknesses, and synthesis guidance."
+        ),
+    },
+    {
+        "name": "final_synthesizer",
+        "title": "FINAL_SYNTHESIZER",
+        "system_suffix": (
+            " You are the FINAL_SYNTHESIZER in a Mixture of Agents system.\n"
+            "Your role: Create the best possible response by synthesizing insights from multiple specialized agents.\n"
+            "Combine the best elements and address the critiques."
+        ),
+    },
+]
+
 _litellm_client = None
 
 
@@ -24,29 +85,28 @@ def _get_litellm_client():
     return _litellm_client
 
 
-def _load_config_from_env(
-    approach: str, config_name: str
-) -> Optional[List[Dict[str, Any]]]:
-    """Load model configuration from environment variable.
+def _validate_moa_profile(config: List[Dict[str, Any]]) -> bool:
+    """Ensure a MOA profile defines all required roles."""
 
-    Args:
-        approach: Either 'bon' or 'moa'
-        config_name: Configuration name (e.g., 'rapid', 'deep', 'coding')
+    if len(config) < len(MOA_REQUIRED_ROLE_NAMES):
+        logger.error(
+            "MOA profile has %s roles but requires %s (%s)",
+            len(config),
+            len(MOA_REQUIRED_ROLE_NAMES),
+            ", ".join(MOA_REQUIRED_ROLE_NAMES),
+        )
+        return False
 
-    Returns:
-        List of candidate/agent configurations, or None if not found
-    """
-    env_var = f"OPTILLM_{approach.upper()}_CONFIG_{config_name.upper()}"
-    config_json = os.environ.get(env_var)
+    defined_titles = {role.get("title") for role in config if isinstance(role, dict)}
+    missing = [name for name in MOA_REQUIRED_ROLE_NAMES if name not in defined_titles]
+    if missing:
+        logger.error(
+            "MOA profile is missing required roles: %s",
+            ", ".join(missing),
+        )
+        return False
 
-    if not config_json:
-        return None
-
-    try:
-        return json.loads(config_json)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse {env_var} as JSON")
-        return None
+    return True
 
 
 def _get_role_by_name(
@@ -81,65 +141,70 @@ def _get_role_by_name(
     }
 
 
-# Fallback agents for MOA when no configuration is provided
-# Uses the "deep" configuration with CREATIVE/ANALYST/CRITIC/SYNTHESIZER/FINAL_SYNTHESIZER roles
-MOA_AGENTS = [
-    {
-        "name": "creative",
-        "title": "CREATIVE",
-        "system_suffix": (
-            " You are a CREATIVE agent in a Mixture of Agents system.\n"
-            "Your role: Think creatively, consider unconventional approaches, and generate diverse solutions.\n"
-            "Embrace brainstorming and explore multiple angles even if they seem unusual at first."
-        ),
-        "reasoning_effort": "high",
-        "model": "openrouter/google/gemini-3-flash-preview",
-    },
-    {
-        "name": "analyst",
-        "title": "ANALYST",
-        "system_suffix": (
-            " You are an ANALYST agent in a Mixture of Agents system.\n"
-            "Your role: Be methodical, thorough, and systematic. Break down the problem step by step.\n"
-            "Focus on logical structure, clear reasoning, and comprehensive coverage of the problem space."
-        ),
-        "reasoning_effort": "high",
-        "model": "openrouter/openai/gpt-5.2-chat",
-    },
-    {
-        "name": "critic",
-        "title": "CRITIC",
-        "system_suffix": (
-            " You are a CRITIC agent in a Mixture of Agents system.\n"
-            "Your role: Be skeptical and identify potential weaknesses, edge cases, and failure modes.\n"
-            "Question assumptions and highlight what might go wrong or what's being overlooked."
-        ),
-        "reasoning_effort": "high",
-        "model": "openrouter/anthropic/claude-haiku-4.5",
-    },
-    {
-        "name": "synthesizer",
-        "title": "SYNTHESIZER",
-        "system_suffix": (
-            " You are a SYNTHESIZER agent in a Mixture of Agents system.\n"
-            "Your role: Analyze and critique the responses from multiple specialized agents.\n"
-            "Provide strengths, weaknesses, and synthesis guidance."
-        ),
-        "reasoning_effort": "high",
-        "model": "openrouter/google/gemini-3-flash-preview",
-    },
-    {
-        "name": "final_synthesizer",
-        "title": "FINAL_SYNTHESIZER",
-        "system_suffix": (
-            " You are the FINAL_SYNTHESIZER in a Mixture of Agents system.\n"
-            "Your role: Create the best possible response by synthesizing insights from multiple specialized agents.\n"
-            "Combine the best elements and address the critiques."
-        ),
-        "reasoning_effort": "high",
-        "model": "openrouter/google/gemini-3-flash-preview",
-    },
-]
+def _determine_default_model(preferred_model: Optional[str]) -> str:
+    if (
+        preferred_model
+        and preferred_model not in {"auto", "none"}
+        and not preferred_model.startswith("pre-")
+    ):
+        return preferred_model
+    return os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
+
+
+def _build_homogeneous_moa_config(model: str) -> List[Dict[str, Any]]:
+    config: List[Dict[str, Any]] = []
+    for template in _ROLE_TEMPLATES:
+        config.append(
+            {
+                **template,
+                "model": model,
+                "reasoning_effort": template.get(
+                    "reasoning_effort", DEFAULT_REASONING_EFFORT
+                ),
+            }
+        )
+    return config
+
+
+def _resolve_moa_config(
+    model: Optional[str],
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Return the MOA role configuration and fallback model."""
+
+    resolved_config = None
+
+    if model:
+        force_predefined = model.startswith("pre-")
+        candidate_key = model[4:] if force_predefined else model
+        resolved_config = load_complex_profile("moa", candidate_key)
+        if resolved_config and not _validate_moa_profile(resolved_config):
+            resolved_config = None
+
+        if resolved_config:
+            logger.info("MOA: Using complex profile '%s'", candidate_key)
+        elif force_predefined:
+            logger.warning(
+                "MOA: Requested complex profile '%s' not found; falling back to default roles",
+                candidate_key,
+            )
+
+    if resolved_config:
+        default_model = _determine_default_model(None)
+        return resolved_config, default_model
+
+    default_model = _determine_default_model(model)
+    if not model or model in {"auto", "none"}:
+        logger.info(
+            "MOA: No model specified, using default OPTILLM_MODEL: %s",
+            default_model,
+        )
+    else:
+        logger.info(
+            "MOA: Using model '%s' for all MOA roles",
+            default_model,
+        )
+
+    return _build_homogeneous_moa_config(default_model), default_model
 
 
 def _generate_agent_response(
@@ -209,47 +274,10 @@ def mixture_of_agents(
     if request_config:
         max_tokens = request_config.get("max_tokens", max_tokens)
 
-    # Determine configuration from model parameter
-    # Note: parse_combined_approach() already stripped the "moa-" prefix
-    # So model="rapid" for "moa-rapid", or model="pre-rapid" for "moa-pre-rapid"
-    config_name = None
+    moa_config, default_model = _resolve_moa_config(model)
 
-    # Check for "pre-" prefix indicating predefined config
-    if model and model.startswith("pre-"):
-        config_name = model[4:]  # Extract config name after "pre-"
-    elif model:
-        # Check if model name itself is a known config name
-        agents = _load_config_from_env("moa", model)
-        if agents:
-            config_name = model
-
-    # Use configuration if found, otherwise use single model for all agents
-    if config_name:
-        MOA_AGENTS_LOCAL = _load_config_from_env("moa", config_name)
-        logger.info(f"MOA: Using predefined config '{config_name}'")
-    else:
-        # Use the specified model, or fall back to default if not provided/invalid
-        if not model or model in ["auto", "none"]:
-            model = os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
-            logger.info(
-                f"MOA: No model specified, using default OPTILLM_MODEL: {model}"
-            )
-
-        # Create homogeneous agents using the specified model
-        MOA_AGENTS_LOCAL = [
-            {
-                "name": f"agent_{i}",
-                "title": f"AGENT_{i}",
-                "system_suffix": f" You are AGENT_{i} in a Mixture of Agents.",
-                "model": model,
-                "reasoning_effort": "high",
-            }
-            for i in range(3)
-        ]
-        logger.info(f"MOA: Using model '{model}' for all 3 agents")
-
-    # Extract first 3 entries for agent generation (config may have 5 total)
-    agents_for_generation = MOA_AGENTS_LOCAL[:3]
+    # Extract first 3 entries for agent generation (config always has 5 total)
+    agents_for_generation = moa_config[:MOA_GENERATION_ROLE_COUNT]
 
     completions = []
     agent_names = []
@@ -257,12 +285,12 @@ def mixture_of_agents(
     logger.debug("Generating agent responses with distinct personalities")
 
     # Generate responses from each distinct agent in parallel
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=MOA_GENERATION_ROLE_COUNT) as executor:
         futures = {
             executor.submit(
                 _generate_agent_response,
                 client,
-                model,
+                default_model,
                 system_prompt,
                 initial_query,
                 agent,
@@ -284,7 +312,7 @@ def mixture_of_agents(
 
                 moa_completion_tokens += result["tokens"]
                 logger.info(
-                    f'{result["name"]}: Generated response (effort={result["effort"]}). Tokens: {result["tokens"]}'
+                    f"{result['name']}: Generated response (effort={result['effort']}). Tokens: {result['tokens']}"
                 )
 
             except Exception as e:
@@ -313,7 +341,7 @@ def mixture_of_agents(
 
 Original Query: {initial_query}
 
-{''.join(critique_sections)}
+{"".join(critique_sections)}
 
 ## Your Analysis
 
@@ -332,7 +360,7 @@ Be thorough and specific in your critique."""
     logger.debug("Generating agent critique")
 
     # Get SYNTHESIZER configuration
-    synthesizer = _get_role_by_name(MOA_AGENTS_LOCAL, "SYNTHESIZER")
+    synthesizer = _get_role_by_name(moa_config, "SYNTHESIZER", default_model)
     synthesizer_model = synthesizer.get(
         "model", "openrouter/google/gemini-3-flash-preview"
     )
@@ -413,7 +441,7 @@ Be thorough and specific in your critique."""
 {initial_query}
 
 ## Agent Responses
-{''.join(final_sections)}
+{"".join(final_sections)}
 
 ## Critique and Synthesis Guidance
 {critiques}
@@ -432,7 +460,9 @@ Your response should be better than any single agent's response - that's the pow
     logger.debug("Generating final synthesized response")
 
     # Get FINAL_SYNTHESIZER configuration
-    final_synthesizer = _get_role_by_name(MOA_AGENTS_LOCAL, "FINAL_SYNTHESIZER")
+    final_synthesizer = _get_role_by_name(
+        moa_config, "FINAL_SYNTHESIZER", default_model
+    )
     final_model = final_synthesizer.get(
         "model", "openrouter/google/gemini-3-flash-preview"
     )
