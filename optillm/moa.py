@@ -1,5 +1,8 @@
+import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any, Optional
 
 import optillm
 from optillm import conversation_logger
@@ -21,17 +24,75 @@ def _get_litellm_client():
     return _litellm_client
 
 
-# Agent personalities for MOA - distinct perspectives that catch different mistakes
+def _load_config_from_env(
+    approach: str, config_name: str
+) -> Optional[List[Dict[str, Any]]]:
+    """Load model configuration from environment variable.
+
+    Args:
+        approach: Either 'bon' or 'moa'
+        config_name: Configuration name (e.g., 'rapid', 'deep', 'coding')
+
+    Returns:
+        List of candidate/agent configurations, or None if not found
+    """
+    env_var = f"OPTILLM_{approach.upper()}_CONFIG_{config_name.upper()}"
+    config_json = os.environ.get(env_var)
+
+    if not config_json:
+        return None
+
+    try:
+        return json.loads(config_json)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse {env_var} as JSON")
+        return None
+
+
+def _get_role_by_name(
+    config: List[Dict[str, Any]],
+    role_name: str,
+    default_model: str = "openrouter/google/gemini-3-flash-preview",
+) -> Dict[str, Any]:
+    """Find a role configuration by name from the config list.
+
+    Args:
+        config: Full configuration list
+        role_name: Name/title of the role to find (e.g., 'SYNTHESIZER', 'FINAL_SYNTHESIZER')
+        default_model: Default model if role not found
+
+    Returns:
+        Role configuration dict with model, reasoning_effort, etc.
+    """
+    for role in config:
+        # Check both 'name' and 'title' fields for flexibility
+        if role.get("name") == role_name or role.get("title") == role_name:
+            return role
+    # Fallback to default model
+    logger.warning(
+        f"Role {role_name} not found in config, using default model {default_model}"
+    )
+    return {
+        "name": role_name.lower(),
+        "title": role_name,
+        "model": default_model,
+        "reasoning_effort": "high",
+        "system_suffix": "",
+    }
+
+
+# Fallback agents for MOA when no configuration is provided
+# Uses the "deep" configuration with CREATIVE/ANALYST/CRITIC/SYNTHESIZER/FINAL_SYNTHESIZER roles
 MOA_AGENTS = [
     {
-        "name": "explorer",
-        "title": "EXPLORER",
+        "name": "creative",
+        "title": "CREATIVE",
         "system_suffix": (
-            " You are an EXPLORER agent in a Mixture of Agents system.\n"
+            " You are a CREATIVE agent in a Mixture of Agents system.\n"
             "Your role: Think creatively, consider unconventional approaches, and generate diverse solutions.\n"
             "Embrace brainstorming and explore multiple angles even if they seem unusual at first."
         ),
-        "temperature": 1.0,
+        "reasoning_effort": "high",
         "model": "openrouter/google/gemini-3-flash-preview",
     },
     {
@@ -42,7 +103,7 @@ MOA_AGENTS = [
             "Your role: Be methodical, thorough, and systematic. Break down the problem step by step.\n"
             "Focus on logical structure, clear reasoning, and comprehensive coverage of the problem space."
         ),
-        "temperature": 0.3,
+        "reasoning_effort": "high",
         "model": "openrouter/openai/gpt-5.2-chat",
     },
     {
@@ -53,8 +114,30 @@ MOA_AGENTS = [
             "Your role: Be skeptical and identify potential weaknesses, edge cases, and failure modes.\n"
             "Question assumptions and highlight what might go wrong or what's being overlooked."
         ),
-        "temperature": 0.5,
+        "reasoning_effort": "high",
         "model": "openrouter/anthropic/claude-haiku-4.5",
+    },
+    {
+        "name": "synthesizer",
+        "title": "SYNTHESIZER",
+        "system_suffix": (
+            " You are a SYNTHESIZER agent in a Mixture of Agents system.\n"
+            "Your role: Analyze and critique the responses from multiple specialized agents.\n"
+            "Provide strengths, weaknesses, and synthesis guidance."
+        ),
+        "reasoning_effort": "high",
+        "model": "openrouter/google/gemini-3-flash-preview",
+    },
+    {
+        "name": "final_synthesizer",
+        "title": "FINAL_SYNTHESIZER",
+        "system_suffix": (
+            " You are the FINAL_SYNTHESIZER in a Mixture of Agents system.\n"
+            "Your role: Create the best possible response by synthesizing insights from multiple specialized agents.\n"
+            "Combine the best elements and address the critiques."
+        ),
+        "reasoning_effort": "high",
+        "model": "openrouter/google/gemini-3-flash-preview",
     },
 ]
 
@@ -68,6 +151,7 @@ def _generate_agent_response(
 
     # Use agent's specific model or default
     agent_model = agent.get("model", default_model)
+    agent_effort = agent.get("reasoning_effort", "high")
 
     # Route to appropriate client based on model prefix
     # OpenRouter models go through LiteLLM, others use the default client (e.g., Z.ai)
@@ -81,7 +165,7 @@ def _generate_agent_response(
     # Log the agent configuration with model and parameters
     logger.info(
         f"{agent_name}: Using model='{agent_model}' via {provider}, "
-        f"temperature={agent['temperature']}, max_tokens={max_tokens}"
+        f"reasoning_effort={agent_effort}, max_tokens={max_tokens}"
     )
 
     provider_request = {
@@ -91,16 +175,8 @@ def _generate_agent_response(
             {"role": "user", "content": initial_query},
         ],
         "max_tokens": max_tokens,
-        "temperature": agent["temperature"],
+        "reasoning_effort": agent_effort,
     }
-
-    # Add reasoning effort for Gemini models via OpenRouter
-    # LiteLLM translates reasoning_effort kwarg to OpenRouter's {"reasoning": {"effort": "high"}} format
-    if agent_model.startswith("openrouter/google/") or agent_model.startswith(
-        "openrouter/gemini-"
-    ):
-        provider_request["reasoning_effort"] = "high"
-        logger.info(f"{agent_name}: Enabled reasoning_effort=high for Gemini model")
 
     response = optillm.safe_completions_create(agent_client, provider_request)
 
@@ -112,7 +188,7 @@ def _generate_agent_response(
             response.model_dump() if hasattr(response, "model_dump") else response
         ),
         "request": provider_request,
-        "temp": agent["temperature"],
+        "effort": agent_effort,
     }
 
 
@@ -133,6 +209,48 @@ def mixture_of_agents(
     if request_config:
         max_tokens = request_config.get("max_tokens", max_tokens)
 
+    # Determine configuration from model parameter
+    # Note: parse_combined_approach() already stripped the "moa-" prefix
+    # So model="rapid" for "moa-rapid", or model="pre-rapid" for "moa-pre-rapid"
+    config_name = None
+
+    # Check for "pre-" prefix indicating predefined config
+    if model and model.startswith("pre-"):
+        config_name = model[4:]  # Extract config name after "pre-"
+    elif model:
+        # Check if model name itself is a known config name
+        agents = _load_config_from_env("moa", model)
+        if agents:
+            config_name = model
+
+    # Use configuration if found, otherwise use single model for all agents
+    if config_name:
+        MOA_AGENTS_LOCAL = _load_config_from_env("moa", config_name)
+        logger.info(f"MOA: Using predefined config '{config_name}'")
+    else:
+        # Use the specified model, or fall back to default if not provided/invalid
+        if not model or model in ["auto", "none"]:
+            model = os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
+            logger.info(
+                f"MOA: No model specified, using default OPTILLM_MODEL: {model}"
+            )
+
+        # Create homogeneous agents using the specified model
+        MOA_AGENTS_LOCAL = [
+            {
+                "name": f"agent_{i}",
+                "title": f"AGENT_{i}",
+                "system_suffix": f" You are AGENT_{i} in a Mixture of Agents.",
+                "model": model,
+                "reasoning_effort": "high",
+            }
+            for i in range(3)
+        ]
+        logger.info(f"MOA: Using model '{model}' for all 3 agents")
+
+    # Extract first 3 entries for agent generation (config may have 5 total)
+    agents_for_generation = MOA_AGENTS_LOCAL[:3]
+
     completions = []
     agent_names = []
 
@@ -150,7 +268,7 @@ def mixture_of_agents(
                 agent,
                 max_tokens,
             ): agent
-            for agent in MOA_AGENTS
+            for agent in agents_for_generation
         }
 
         for future in as_completed(futures):
@@ -166,7 +284,7 @@ def mixture_of_agents(
 
                 moa_completion_tokens += result["tokens"]
                 logger.info(
-                    f'{result["name"]}: Generated response (temp={result["temp"]}). Tokens: {result["tokens"]}'
+                    f'{result["name"]}: Generated response (effort={result["effort"]}). Tokens: {result["tokens"]}'
                 )
 
             except Exception as e:
@@ -178,9 +296,9 @@ def mixture_of_agents(
         logger.error("Failed to generate any agent responses")
         return "Error: Could not generate any agent responses", 0
 
-    if len(completions) < len(MOA_AGENTS):
+    if len(completions) < len(agents_for_generation):
         logger.warning(
-            f"Only generated {len(completions)}/{len(MOA_AGENTS)} agent responses"
+            f"Only generated {len(completions)}/{len(agents_for_generation)} agent responses"
         )
 
     # Build critique prompt with agent labels
@@ -213,23 +331,41 @@ Be thorough and specific in your critique."""
 
     logger.debug("Generating agent critique")
 
-    # Use LiteLLM client for SYNTHESIZER with Gemini via OpenRouter
-    synthesizer_client = _get_litellm_client()
-    synthesizer_model = "openrouter/google/gemini-3-flash-preview"
+    # Get SYNTHESIZER configuration
+    synthesizer = _get_role_by_name(MOA_AGENTS_LOCAL, "SYNTHESIZER")
+    synthesizer_model = synthesizer.get(
+        "model", "openrouter/google/gemini-3-flash-preview"
+    )
+    synthesizer_effort = synthesizer.get("reasoning_effort", "high")
+    synthesizer_suffix = synthesizer.get("system_suffix", "")
+
+    # Add system suffix if configured
+    if synthesizer_suffix:
+        system_prompt_with_suffix = system_prompt + synthesizer_suffix
+    else:
+        system_prompt_with_suffix = system_prompt
+
+    # Route to appropriate client based on model prefix
+    if synthesizer_model.startswith("openrouter/"):
+        synthesizer_client = _get_litellm_client()
+        provider = "OpenRouter (via LiteLLM)"
+    else:
+        synthesizer_client = client
+        provider = f"Direct ({type(client).__name__})"
 
     provider_request = {
         "model": synthesizer_model,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt_with_suffix},
             {"role": "user", "content": critique_prompt},
         ],
         "max_tokens": 8192,  # Increased for comprehensive critique
-        "temperature": 0.3,
+        "reasoning_effort": synthesizer_effort,
     }
 
     logger.info(
-        f"SYNTHESIZER (critique): Using model='{synthesizer_model}' via OpenRouter (via LiteLLM), "
-        f"max_tokens=8192, temperature=0.3"
+        f"SYNTHESIZER (critique): Using model='{synthesizer_model}' via {provider}, "
+        f"max_tokens=8192, reasoning_effort={synthesizer_effort}"
     )
 
     critique_response = optillm.safe_completions_create(
@@ -295,26 +431,44 @@ Your response should be better than any single agent's response - that's the pow
 
     logger.debug("Generating final synthesized response")
 
-    # Use LiteLLM client for SYNTHESIZER with Gemini via OpenRouter
-    # Reuse the same client and model from critique stage
+    # Get FINAL_SYNTHESIZER configuration
+    final_synthesizer = _get_role_by_name(MOA_AGENTS_LOCAL, "FINAL_SYNTHESIZER")
+    final_model = final_synthesizer.get(
+        "model", "openrouter/google/gemini-3-flash-preview"
+    )
+    final_effort = final_synthesizer.get("reasoning_effort", "high")
+    final_suffix = final_synthesizer.get("system_suffix", "")
+
+    # Add system suffix if configured
+    if final_suffix:
+        system_prompt_final = system_prompt + final_suffix
+    else:
+        system_prompt_final = system_prompt
+
+    # Route to appropriate client based on model prefix
+    if final_model.startswith("openrouter/"):
+        final_client = _get_litellm_client()
+        provider = "OpenRouter (via LiteLLM)"
+    else:
+        final_client = client
+        provider = f"Direct ({type(client).__name__})"
+
     provider_request = {
-        "model": synthesizer_model,
+        "model": final_model,
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt_final},
             {"role": "user", "content": final_prompt},
         ],
         "max_tokens": max_tokens,
-        "temperature": 0.5,
+        "reasoning_effort": final_effort,
     }
 
     logger.info(
-        f"SYNTHESIZER (final): Using model='{synthesizer_model}' via OpenRouter (via LiteLLM), "
-        f"max_tokens={max_tokens}, temperature=0.5"
+        f"FINAL_SYNTHESIZER: Using model='{final_model}' via {provider}, "
+        f"max_tokens={max_tokens}, reasoning_effort={final_effort}"
     )
 
-    final_response = optillm.safe_completions_create(
-        synthesizer_client, provider_request
-    )
+    final_response = optillm.safe_completions_create(final_client, provider_request)
 
     # Convert response to dict for logging
     response_dict = (

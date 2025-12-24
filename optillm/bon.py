@@ -1,5 +1,8 @@
+import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any, Optional
 
 import optillm
 from optillm import conversation_logger
@@ -21,27 +24,88 @@ def _get_litellm_client():
     return _litellm_client
 
 
-# Diverse candidates for BON - different models via OpenRouter for speed and variety
+def _load_config_from_env(
+    approach: str, config_name: str
+) -> Optional[List[Dict[str, Any]]]:
+    """Load model configuration from environment variable.
+
+    Args:
+        approach: Either 'bon' or 'moa'
+        config_name: Configuration name (e.g., 'rapid', 'deep', 'coding')
+
+    Returns:
+        List of candidate/agent configurations, or None if not found
+    """
+    env_var = f"OPTILLM_{approach.upper()}_CONFIG_{config_name.upper()}"
+    config_json = os.environ.get(env_var)
+
+    if not config_json:
+        return None
+
+    try:
+        return json.loads(config_json)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse {env_var} as JSON")
+        return None
+
+
+def _get_role_by_name(
+    config: List[Dict[str, Any]],
+    role_name: str,
+    default_model: str = "openrouter/google/gemini-3-flash-preview",
+) -> Dict[str, Any]:
+    """Find a role configuration by name from the config list.
+
+    Args:
+        config: Full configuration list
+        role_name: Name of the role to find (e.g., 'QUALITY_RATER', 'SYNTHESIZER')
+        default_model: Default model if role not found
+
+    Returns:
+        Role configuration dict with model, reasoning_effort, etc.
+    """
+    for role in config:
+        if role.get("name") == role_name:
+            return role
+    # Fallback to default model
+    logger.warning(
+        f"Role {role_name} not found in config, using default model {default_model}"
+    )
+    return {"name": role_name, "model": default_model, "reasoning_effort": "high"}
+
+
+# Fallback candidates for BON when no configuration is provided
+# Uses the "deep" configuration with diverse models and explanatory role names
 BON_CANDIDATES = [
     {
-        "name": "GEMINI_EXPLORATORY",
+        "name": "CREATIVE",
         "model": "openrouter/google/gemini-3-flash-preview",
-        "temperature": 1.0,
+        "reasoning_effort": "high",
     },
     {
-        "name": "GPT_CREATIVE",
+        "name": "ANALYST",
         "model": "openrouter/openai/gpt-5.2-chat",
-        "temperature": 0.8,
+        "reasoning_effort": "high",
     },
     {
-        "name": "HAIKU_BALANCED",
+        "name": "CRITIC",
         "model": "openrouter/anthropic/claude-haiku-4.5",
-        "temperature": 0.6,
+        "reasoning_effort": "high",
     },
     {
-        "name": "GEMINI_PRECISE",
+        "name": "SYNTHESIZER",
         "model": "openrouter/google/gemini-3-flash-preview",
-        "temperature": 0.3,
+        "reasoning_effort": "high",
+    },
+    {
+        "name": "QUALITY_RATER",
+        "model": "openrouter/google/gemini-3-flash-preview",
+        "reasoning_effort": "high",
+    },
+    {
+        "name": "FINAL_SYNTHESIZER",
+        "model": "openrouter/google/gemini-3-flash-preview",
+        "reasoning_effort": "high",
     },
 ]
 
@@ -52,7 +116,7 @@ def _generate_bon_candidate(
     """Generate a single BON candidate (thread-safe) with multi-model support."""
     candidate_name = candidate["name"]
     candidate_model = candidate.get("model", default_model)
-    candidate_temp = candidate["temperature"]
+    candidate_effort = candidate.get("reasoning_effort", "high")
 
     # Route to appropriate client based on model prefix
     # OpenRouter models go through LiteLLM, others use the default client (e.g., Z.ai)
@@ -66,7 +130,7 @@ def _generate_bon_candidate(
     # Log the candidate configuration
     logger.info(
         f"{candidate_name}: Using model='{candidate_model}' via {provider}, "
-        f"temperature={candidate_temp}, max_tokens={max_tokens}"
+        f"reasoning_effort={candidate_effort}, max_tokens={max_tokens}"
     )
 
     provider_request = {
@@ -76,7 +140,7 @@ def _generate_bon_candidate(
             {"role": "user", "content": initial_query},
         ],
         "max_tokens": max_tokens,
-        "temperature": candidate_temp,
+        "reasoning_effort": candidate_effort,
     }
 
     response = optillm.safe_completions_create(agent_client, provider_request)
@@ -85,7 +149,7 @@ def _generate_bon_candidate(
         "index": index,
         "name": candidate_name,
         "model": candidate_model,
-        "temp": candidate_temp,
+        "effort": candidate_effort,
         "content": response.choices[0].message.content,
         "tokens": response.usage.completion_tokens,
         "response_dict": (
@@ -128,6 +192,46 @@ def best_of_n_sampling(
     if request_config:
         max_tokens = request_config.get("max_tokens", max_tokens)
 
+    # Determine configuration from model parameter
+    # Note: parse_combined_approach() already stripped the "bon-" prefix
+    # So model="rapid" for "bon-rapid", or model="pre-rapid" for "bon-pre-rapid"
+    config_name = None
+
+    # Check for "pre-" prefix indicating predefined config
+    if model.startswith("pre-"):
+        config_name = model[4:]  # Extract config name after "pre-"
+    else:
+        # Check if model name itself is a known config name
+        candidates = _load_config_from_env("bon", model)
+        if candidates:
+            config_name = model
+
+    # Use configuration if found, otherwise use single model for all candidates
+    if config_name:
+        BON_CANDIDATES_LOCAL = _load_config_from_env("bon", config_name)
+        logger.info(f"BON: Using predefined config '{config_name}'")
+    else:
+        # Use the specified model, or fall back to default if not provided/invalid
+        if not model or model in ["auto", "none"]:
+            model = os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
+            logger.info(
+                f"BON: No model specified, using default OPTILLM_MODEL: {model}"
+            )
+
+        # Create homogeneous candidates using the specified model
+        BON_CANDIDATES_LOCAL = [
+            {
+                "name": f"CANDIDATE_{i}",
+                "model": model,
+                "reasoning_effort": "high",
+            }
+            for i in range(n)
+        ]
+        logger.info(f"BON: Using model '{model}' for all {n} candidates")
+
+    # Extract first 4 entries for candidate generation (config may have 6 total)
+    candidates_for_generation = BON_CANDIDATES_LOCAL[:4]
+
     completions = []
     candidate_names = []
 
@@ -137,7 +241,7 @@ def best_of_n_sampling(
     with ThreadPoolExecutor(max_workers=n) as executor:
         futures = {}
         for i in range(n):
-            candidate = BON_CANDIDATES[i % len(BON_CANDIDATES)]
+            candidate = candidates_for_generation[i % len(candidates_for_generation)]
             future = executor.submit(
                 _generate_bon_candidate,
                 client,
@@ -163,7 +267,7 @@ def best_of_n_sampling(
 
                 bon_completion_tokens += result["tokens"]
                 logger.info(
-                    f'{result["name"]}: Generated candidate {result["index"] + 1}/{n}. Tokens: {result["tokens"]}'
+                    f'{result["name"]}: Generated candidate {result["index"] + 1}/{n} (effort={result["effort"]}). Tokens: {result["tokens"]}'
                 )
 
             except Exception as e:
@@ -180,8 +284,15 @@ def best_of_n_sampling(
     if len(completions) < n:
         logger.warning(f"Only generated {len(completions)}/{n} candidates")
 
-    # Batch rate all candidates using OpenRouter
-    logger.debug("Batch rating candidates via OpenRouter")
+    # Batch rate all candidates using configurable QUALITY_RATER role
+    logger.debug("Batch rating candidates")
+
+    # Get QUALITY_RATER configuration
+    quality_rater = _get_role_by_name(BON_CANDIDATES_LOCAL, "QUALITY_RATER")
+    rating_model = quality_rater.get(
+        "model", "openrouter/google/gemini-3-flash-preview"
+    )
+    rating_effort = quality_rater.get("reasoning_effort", "high")
 
     # Build the rating prompt with all candidates
     candidates_text = ""
@@ -226,9 +337,13 @@ RANKING: [Candidate numbers in order, best first]
 
 Be thorough and objective in your assessment."""
 
-    # Use LiteLLM with Gemini for fast batch rating via OpenRouter
-    rating_client = _get_litellm_client()
-    rating_model = "openrouter/google/gemini-3-flash-preview"
+    # Route to appropriate client based on model prefix
+    if rating_model.startswith("openrouter/"):
+        rating_client = _get_litellm_client()
+        provider = "OpenRouter (via LiteLLM)"
+    else:
+        rating_client = client
+        provider = f"Direct ({type(client).__name__})"
 
     provider_request = {
         "model": rating_model,
@@ -237,12 +352,12 @@ Be thorough and objective in your assessment."""
             {"role": "user", "content": rating_prompt},
         ],
         "max_tokens": 2048,
-        "temperature": 0.2,
+        "reasoning_effort": rating_effort,
     }
 
     logger.info(
-        f"BATCH RATER: Using model='{rating_model}' via OpenRouter (via LiteLLM), "
-        f"max_tokens=2048, temperature=0.2"
+        f"QUALITY_RATER: Using model='{rating_model}' via {provider}, "
+        f"max_tokens=2048, reasoning_effort={rating_effort}"
     )
 
     rating_response = optillm.safe_completions_create(rating_client, provider_request)
@@ -286,6 +401,13 @@ Be thorough and objective in your assessment."""
 
         logger.debug(f"Synthesizing top {len(top_indices)} candidates")
 
+        # Get FINAL_SYNTHESIZER configuration
+        final_synthesizer = _get_role_by_name(BON_CANDIDATES_LOCAL, "FINAL_SYNTHESIZER")
+        synthesis_model = final_synthesizer.get(
+            "model", "openrouter/google/gemini-3-flash-preview"
+        )
+        synthesis_effort = final_synthesizer.get("reasoning_effort", "high")
+
         # Build synthesis prompt
         top_candidates_text = ""
         for rank, idx in enumerate(top_indices, 1):
@@ -316,9 +438,13 @@ Create a final response that:
 
 Your synthesis should be better than the individual candidates - that's the advantage of Best-of-N with intelligent selection."""
 
-        # Use LiteLLM with Gemini for fast synthesis via OpenRouter
-        synthesis_client = _get_litellm_client()
-        synthesis_model = "openrouter/google/gemini-3-flash-preview"
+        # Route to appropriate client based on model prefix
+        if synthesis_model.startswith("openrouter/"):
+            synthesis_client = _get_litellm_client()
+            provider = "OpenRouter (via LiteLLM)"
+        else:
+            synthesis_client = client
+            provider = f"Direct ({type(client).__name__})"
 
         provider_request = {
             "model": synthesis_model,
@@ -327,12 +453,12 @@ Your synthesis should be better than the individual candidates - that's the adva
                 {"role": "user", "content": synthesis_prompt},
             ],
             "max_tokens": max_tokens,
-            "temperature": 0.5,
+            "reasoning_effort": synthesis_effort,
         }
 
         logger.info(
-            f"SYNTHESIZER: Using model='{synthesis_model}' via OpenRouter (via LiteLLM), "
-            f"max_tokens={max_tokens}, temperature=0.5"
+            f"FINAL_SYNTHESIZER: Using model='{synthesis_model}' via {provider}, "
+            f"max_tokens={max_tokens}, reasoning_effort={synthesis_effort}"
         )
 
         synthesis_response = optillm.safe_completions_create(

@@ -18,6 +18,7 @@ services:
             # OPENAI_API_KEY: ${OPENAI_API_KEY:-""}
             ZAI_API_KEY: ${ZAI_API_KEY}
             ZAI_BASE_URL: ${ZAI_BASE_URL:-"https://api.z.ai/api/coding/paas/v4"}
+            OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
             OPTILLM_PORT: ${OPTILLM_PORT:-8000}
             # OPTILLM_BASE_URL: ${OPENAI_BASE_URL:-"https://api.z.ai/api/coding/paas/v4"} # can be set to any OpenAI API compatible endpoint
             # OPTILLM_API_KEY: ${OPTILLM_API_KEY:-} # optionally sets an API key for Optillm clients
@@ -33,6 +34,16 @@ services:
             # OPTILLM_RSTAR_C: 1.4
             # OPTILLM_N: 1
             # OPTILLM_RETURN_FULL_RESPONSE: false
+            # BON and MOA Configurations (loaded from .env file via env_file above)
+            # Available complex models: rapid, deep, coding
+            # Usage: model="bon-rapid", model="moa-deep", model="bon-coding", etc.
+            # These variables can also be set directly here to override .env values:
+            # OPTILLM_BON_CONFIG_RAPID: ${OPTILLM_BON_CONFIG_RAPID}
+            # OPTILLM_BON_CONFIG_DEEP: ${OPTILLM_BON_CONFIG_DEEP}
+            # OPTILLM_BON_CONFIG_CODING: ${OPTILLM_BON_CONFIG_CODING}
+            # OPTILLM_MOA_CONFIG_RAPID: ${OPTILLM_MOA_CONFIG_RAPID}
+            # OPTILLM_MOA_CONFIG_DEEP: ${OPTILLM_MOA_CONFIG_DEEP}
+            # OPTILLM_MOA_CONFIG_CODING: ${OPTILLM_MOA_CONFIG_CODING}
         restart: on-failure
         stop_grace_period: 2s
         healthcheck:
