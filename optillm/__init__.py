@@ -96,7 +96,8 @@ def _load_model_aliases(env_var_names=("OPTILLM_MODEL_ALIASES", "ZAI_MODEL_ALIAS
 def _normalize_model_for_provider(model: str, client) -> str:
     """Normalize a model string before sending to a provider.
 
-    - Strips provider prefixes like 'zai/...'
+    - Preserves LiteLLM provider prefixes like 'openrouter/...', 'anthropic/...'
+    - Strips simple provider prefixes like 'zai/...'
     - Applies optional alias mapping from env
     - Returns the normalized model
     """
@@ -105,8 +106,13 @@ def _normalize_model_for_provider(model: str, client) -> str:
 
     normalized = model
 
+    # Preserve multi-part provider prefixes for LiteLLM (e.g., 'openrouter/google/gemini-2.5-flash')
+    # These should be passed through as-is since LiteLLM handles the routing
+    if normalized.startswith("openrouter/") or normalized.startswith("anthropic/") or normalized.startswith("cohere/"):
+        # Keep the full model string for LiteLLM routing
+        pass
     # If there's a slash, keep the rightmost segment (handles 'moa-zai/glm-4.6', 'zai/glm-4.6', etc.)
-    if "/" in normalized:
+    elif "/" in normalized:
         normalized = normalized.rsplit("/", 1)[-1]
 
     # Apply optional alias mapping

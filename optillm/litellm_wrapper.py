@@ -1,11 +1,51 @@
 import time
+import logging
+import sys
+import io
+import builtins
+from contextlib import redirect_stdout
+
+# Configure litellm logging BEFORE importing litellm modules
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm.utils").setLevel(logging.WARNING)
+logging.getLogger("litellm.integrations").setLevel(logging.WARNING)
+
+# Monkey-patch builtins.print to suppress LiteLLM's verbose output
+# This catches print() calls from background threads that redirect_stdout() misses
+_original_print = print
+
+
+def _suppress_print(*args, **kwargs):
+    """Suppress print() output unless it contains error/debug info worth logging."""
+    # Convert args to string to check content
+    if args:
+        msg = str(args[0]) if args else ""
+        # Suppress specific LiteLLM messages
+        if "Provider List:" in msg or "docs.litellm.ai" in msg:
+            return
+        # Allow other prints through (errors, important info)
+        _original_print(*args, **kwargs)
+
+
+# Only patch if not already patched
+if builtins.print.__name__ != "_suppress_print":
+    builtins.print = _suppress_print
+
 import litellm
 from litellm import completion
 from litellm.utils import get_valid_models
 from typing import List, Dict, Optional
 
-# Configure litellm to drop unsupported parameters
+# Configure litellm to drop unsupported parameters and suppress verbose output
 litellm.drop_params = True
+litellm.set_verbose = False  # Disable litellm's verbose mode
+
+# Also try to suppress at the module level
+try:
+    litellm.logger.setLevel(logging.WARNING)
+except:
+    pass
 
 SAFETY_SETTINGS = [
     {"category": cat, "threshold": "BLOCK_NONE"}
@@ -29,15 +69,17 @@ class LiteLLMWrapper:
         class Completions:
             @staticmethod
             def create(model: str, messages: List[Dict[str, str]], **kwargs):
-                if model.startswith("gemini"):
-                    response = completion(
-                        model=model,
-                        messages=messages,
-                        **kwargs,
-                        safety_settings=SAFETY_SETTINGS,
-                    )
-                else:
-                    response = completion(model=model, messages=messages, **kwargs)
+                # Suppress LiteLLM's verbose print() output during completion
+                with redirect_stdout(io.StringIO()):
+                    if model.startswith("gemini"):
+                        response = completion(
+                            model=model,
+                            messages=messages,
+                            **kwargs,
+                            safety_settings=SAFETY_SETTINGS,
+                        )
+                    else:
+                        response = completion(model=model, messages=messages, **kwargs)
                 # Convert LiteLLM response to match OpenAI response structure
                 return response
 

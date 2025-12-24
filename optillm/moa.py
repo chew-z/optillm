@@ -6,6 +6,20 @@ from optillm import conversation_logger
 
 logger = logging.getLogger(__name__)
 
+# Lazy-loaded LiteLLM client for OpenRouter models
+_litellm_client = None
+
+
+def _get_litellm_client():
+    """Get or create the LiteLLM client for OpenRouter models (thread-safe singleton)."""
+    global _litellm_client
+    if _litellm_client is None:
+        from optillm.litellm_wrapper import LiteLLMWrapper
+        _litellm_client = LiteLLMWrapper()
+        logger.info("MOA: Created LiteLLM client for OpenRouter models")
+    return _litellm_client
+
+
 # Agent personalities for MOA - distinct perspectives that catch different mistakes
 MOA_AGENTS = [
     {
@@ -17,6 +31,7 @@ MOA_AGENTS = [
             "Embrace brainstorming and explore multiple angles even if they seem unusual at first."
         ),
         "temperature": 1.0,
+        "model": "openrouter/google/gemini-3-flash-preview",
     },
     {
         "name": "analyst",
@@ -27,6 +42,7 @@ MOA_AGENTS = [
             "Focus on logical structure, clear reasoning, and comprehensive coverage of the problem space."
         ),
         "temperature": 0.3,
+        "model": "openrouter/openai/gpt-5.2-chat",
     },
     {
         "name": "critic",
@@ -37,17 +53,36 @@ MOA_AGENTS = [
             "Question assumptions and highlight what might go wrong or what's being overlooked."
         ),
         "temperature": 0.5,
+        "model": "zai/glm-4.7",
     },
 ]
 
 
-def _generate_agent_response(client, model, system_prompt, initial_query, agent, max_tokens):
+def _generate_agent_response(client, default_model, system_prompt, initial_query, agent, max_tokens):
     """Generate response for a single MOA agent (thread-safe)."""
     agent_name = agent["title"]
     agent_system = system_prompt + agent["system_suffix"]
 
+    # Use agent's specific model or default
+    agent_model = agent.get("model", default_model)
+
+    # Route to appropriate client based on model prefix
+    # OpenRouter models go through LiteLLM, others use the default client (e.g., Z.ai)
+    if agent_model.startswith("openrouter/"):
+        agent_client = _get_litellm_client()
+        provider = "OpenRouter (via LiteLLM)"
+    else:
+        agent_client = client
+        provider = f"Direct ({type(client).__name__})"
+
+    # Log the agent configuration with model and parameters
+    logger.info(
+        f"{agent_name}: Using model='{agent_model}' via {provider}, "
+        f"temperature={agent['temperature']}, max_tokens={max_tokens}"
+    )
+
     provider_request = {
-        "model": model,
+        "model": agent_model,
         "messages": [
             {"role": "system", "content": agent_system},
             {"role": "user", "content": initial_query},
@@ -56,7 +91,15 @@ def _generate_agent_response(client, model, system_prompt, initial_query, agent,
         "temperature": agent["temperature"],
     }
 
-    response = optillm.safe_completions_create(client, provider_request)
+    # Add reasoning effort for Gemini models via OpenRouter
+    # LiteLLM translates reasoning_effort kwarg to OpenRouter's {"reasoning": {"effort": "high"}} format
+    if agent_model.startswith("openrouter/google/") or agent_model.startswith(
+        "openrouter/gemini-"
+    ):
+        provider_request["reasoning_effort"] = "high"
+        logger.info(f"{agent_name}: Enabled reasoning_effort=high for Gemini model")
+
+    response = optillm.safe_completions_create(agent_client, provider_request)
 
     return {
         "name": agent_name,
@@ -72,7 +115,7 @@ def mixture_of_agents(
     system_prompt: str,
     initial_query: str,
     client,
-    model: str,
+    model: str = None,
     request_config: dict = None,
     request_id: str = None,
 ) -> str:
@@ -80,7 +123,8 @@ def mixture_of_agents(
     moa_completion_tokens = 0
 
     # Extract max_tokens from request_config with default
-    max_tokens = 4096
+    # Increased default for comprehensive agent responses and synthesis
+    max_tokens = 8192
     if request_config:
         max_tokens = request_config.get("max_tokens", max_tokens)
 
@@ -155,16 +199,25 @@ Be thorough and specific in your critique."""
 
     logger.debug("Generating agent critique")
 
+    # Determine provider info for logging
+    client_type = type(client).__name__
+    provider_info = f"Direct ({client_type})" if "Zai" in client_type or "OpenAI" in client_type else "LiteLLM"
+
     provider_request = {
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": critique_prompt},
         ],
-        "max_tokens": 2048,  # Increased for meaningful critique
+        "max_tokens": 8192,  # Increased for comprehensive critique
         "n": 1,
         "temperature": 0.3,
     }
+
+    logger.info(
+        f"SYNTHESIZER (critique): Using model='{model}' via {provider_info}, "
+        f"max_tokens=8192, temperature=0.3"
+    )
 
     critique_response = optillm.safe_completions_create(client, provider_request)
 
@@ -238,6 +291,11 @@ Your response should be better than any single agent's response - that's the pow
         "temperature": 0.5,
     }
 
+    logger.info(
+        f"SYNTHESIZER (final): Using model='{model}' via {provider_info}, "
+        f"max_tokens={max_tokens}, temperature=0.5"
+    )
+
     final_response = optillm.safe_completions_create(client, provider_request)
 
     # Convert response to dict for logging
@@ -276,6 +334,10 @@ Your response should be better than any single agent's response - that's the pow
         )
     else:
         result = final_response.choices[0].message.content
+
+    # Log snippet of the final result
+    result_preview = result[:200].replace('\n', ' ') + '...' if len(result) > 200 else result.replace('\n', ' ')
+    logger.info(f"Final result snippet: {result_preview}")
 
     logger.info(
         f"MOA complete: {len(completions)} agents, {moa_completion_tokens} total tokens"
