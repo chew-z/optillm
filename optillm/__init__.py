@@ -301,14 +301,17 @@ def safe_completions_create(client, provider_request: dict):
                 client_type,
             )
 
-    # Z.ai special handling: Move 'n' to extra_body BEFORE parameter filtering
-    if "zai" in client_type and "n" in req:
-        n_value = req.pop("n")  # Remove from top-level
-        extra_body = req.get("extra_body", {})
-        if isinstance(extra_body, dict):
-            extra_body["n"] = n_value
-            req["extra_body"] = extra_body
-            logger.debug(f"Z.ai: Moved 'n={n_value}' from top-level to extra_body")
+    # Only OpenAI/Azure/LiteLLM should ever see `n`; others should ignore it
+    supports_n = (
+        "openai" in client_type or "azure" in client_type or "litellm" in client_type
+    )
+    if not supports_n and "n" in req:
+        dropped = req.pop("n")
+        logger.debug(
+            "Dropping unsupported 'n'=%s for client type %s (handled via fan-out in approaches)",
+            dropped,
+            client_type,
+        )
 
     # Apply allowlist filtering to remove unsupported parameters
     req = strip_unsupported_params(client, req)
@@ -325,13 +328,9 @@ def safe_completions_create(client, provider_request: dict):
             # Retry with fresh sanitization from original request
             sanitized = dict(provider_request)
 
-            # Apply Z.ai special handling on retry too
-            if "zai" in client_type and "n" in sanitized:
-                n_value = sanitized.pop("n")
-                extra_body = sanitized.get("extra_body", {})
-                if isinstance(extra_body, dict):
-                    extra_body["n"] = n_value
-                    sanitized["extra_body"] = extra_body
+            # Drop n again for non-OpenAI/Azure/LiteLLM providers
+            if not supports_n and "n" in sanitized:
+                sanitized.pop("n")
 
             # Normalize model on retry
             if "model" in sanitized:
