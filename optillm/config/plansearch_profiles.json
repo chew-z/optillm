@@ -1,0 +1,98 @@
+{
+    "default": [
+        {
+            "name": "OBSERVER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are an expert observer. Find hidden patterns and non-obvious details."
+        },
+        {
+            "name": "BRAINSTORMER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are a creative brainstormer. Generate derived insights from initial observations."
+        },
+        {
+            "name": "PLANNER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are a strategic planner. Create a natural language solution plan."
+        },
+        {
+            "name": "CODER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are an expert programmer. Implement the solution in code."
+        }
+    ],
+    "rapid": [
+        {
+            "name": "OBSERVER",
+            "model": "openrouter/google/gemini-3-flash-preview",
+            "system_suffix": " You are a quick observer. Find key details efficiently."
+        },
+        {
+            "name": "BRAINSTORMER",
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "system_suffix": " You are a rapid brainstormer. Generate quick insights."
+        },
+        {
+            "name": "PLANNER",
+            "model": "openrouter/google/gemini-3-flash-preview",
+            "system_suffix": " You are a fast planner. Create a concise solution plan."
+        },
+        {
+            "name": "CODER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are a fast programmer. Implement the solution quickly."
+        }
+    ],
+    "advanced": [
+        {
+            "name": "OBSERVER",
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "system_suffix": " You are a deep observer. Analyze the problem with extreme attention to detail.",
+            "reasoning_effort": "high"
+        },
+        {
+            "name": "BRAINSTORMER",
+            "model": "openrouter/openai/gpt-5.2",
+            "system_suffix": " You are a deep thinker. Generate profound and non-obvious insights.",
+            "reasoning_effort": "high"
+        },
+        {
+            "name": "PLANNER",
+            "model": "openrouter/openai/gpt-5.2",
+            "system_suffix": " You are a strategic architect. Create a comprehensive and robust solution plan.",
+            "reasoning_effort": "high"
+        },
+        {
+            "name": "CODER",
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "system_suffix": " You are a master software engineer. Implement the solution with production-quality code.",
+            "reasoning_effort": "high"
+        }
+    ],
+    "coding": [
+        {
+            "name": "OBSERVER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are a code analyst. Identify edge cases and constraints.",
+            "reasoning_effort": "high"
+        },
+        {
+            "name": "BRAINSTORMER",
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "system_suffix": " You are a creative algorithmic thinker. Propose efficient data structures and algorithms.",
+            "reasoning_effort": "high"
+        },
+        {
+            "name": "PLANNER",
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "system_suffix": " You are a technical lead. Design the implementation strategy.",
+            "reasoning_effort": "high"
+        },
+        {
+            "name": "CODER",
+            "model": "openrouter/openai/gpt-5.2-codex",
+            "system_suffix": " You are a senior developer. Write clean, efficient, and bug-free Python code.",
+            "reasoning_effort": "high"
+        }
+    ]
+}

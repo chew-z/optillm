@@ -10,14 +10,18 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-APPROACHES = {"bon", "moa"}
+APPROACHES = {"bon", "moa", "plansearch"}
 CONFIG_ENV_VARS = {
     "bon": "OPTILLM_BON_CONFIG_FILE",
     "moa": "OPTILLM_MOA_CONFIG_FILE",
+    "plansearch": "OPTILLM_PLANSEARCH_CONFIG_FILE",
 }
 _DEFAULT_FILES = {
     "bon": os.path.join(os.path.dirname(__file__), "config", "bon_profiles.json"),
     "moa": os.path.join(os.path.dirname(__file__), "config", "moa_profiles.json"),
+    "plansearch": os.path.join(
+        os.path.dirname(__file__), "config", "plansearch_profiles.json"
+    ),
 }
 
 _PROFILE_CACHE: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
