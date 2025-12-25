@@ -293,7 +293,7 @@ Response:
             "n": 1,
             "temperature": 0.1,
         }
-        provider_request_sanitized = optillm.strip_unsupported_n(
+        provider_request_sanitized = optillm.strip_unsupported_params(
             self.client, provider_request
         )
         response = self.client.chat.completions.create(**provider_request_sanitized)

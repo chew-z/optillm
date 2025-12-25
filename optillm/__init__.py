@@ -39,6 +39,8 @@ __all__ = [
     "execute_combined_approaches",
     "execute_parallel_approaches",
     "generate_streaming_response",
+    "strip_unsupported_params",
+    "safe_completions_create",
 ]
 
 
@@ -49,16 +51,147 @@ import json
 logger = logging.getLogger(__name__)
 
 
-def strip_unsupported_n(client, provider_request: dict) -> dict:
-    """Return a sanitized copy of provider_request removing unsupported params for some providers.
+def strip_unsupported_params(client, provider_request: dict) -> dict:
+    """Return a sanitized copy of provider_request keeping only supported parameters.
 
-    Currently strips 'n' for Z.ai clients which do not accept it.
+    Uses allowlists to filter parameters based on provider capabilities:
+    - Z.ai GLM-4.7: Limited set from Z.ai API (temperature, top_p, max_tokens, etc.)
+    - Cerebras: Limited set from Cerebras SDK
+    - OpenAI/Azure: Standard OpenAI API parameters
+    - LiteLLM: Handles filtering automatically, pass everything through
+    - InferenceClient: Local inference with extended parameters
     """
-    sanitized = dict(provider_request)
     client_type = str(type(client)).lower()
-    if "zai" in client_type:
-        sanitized.pop("n", None)
-    return sanitized
+
+    # Standard OpenAI Chat Completions API parameters
+    # Reference: https://platform.openai.com/docs/api-reference/chat/create
+    OPENAI_STANDARD_PARAMS = {
+        "model",
+        "messages",
+        "temperature",
+        "top_p",
+        "n",
+        "stream",
+        "stop",
+        "max_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+        "logit_bias",
+        "user",
+        "seed",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "logprobs",
+        "top_logprobs",
+    }
+
+    # Z.ai GLM-4.7 supported parameters
+    # Reference: https://docs.z.ai/guides/overview/migrate-to-glm-new.md
+    ZAI_GLM_PARAMS = {
+        "model",
+        "messages",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "stream",
+        "tools",
+        "tool_choice",
+        "thinking",
+        "tool_stream",
+        "stop",
+        "user",
+        "extra_body",  # extra_body for 'n' parameter
+    }
+
+    # Cerebras Cloud SDK supported parameters
+    # Reference: https://inference-docs.cerebras.ai/api-reference/chat-completions
+    CEREBRAS_PARAMS = {
+        "model",
+        "messages",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "stream",
+        "stop",
+        "seed",
+        "response_format",
+    }
+
+    # LiteLLM wrapper - passes through all parameters, handles filtering internally
+    if "litellm" in client_type:
+        logger.debug("LiteLLM client detected - passing all parameters through")
+        return dict(provider_request)
+
+    # InferenceClient (local) - supports extended parameters for decoding
+    elif "inferenceclient" in client_type:
+        logger.debug("InferenceClient detected - passing all parameters through")
+        return dict(provider_request)
+
+    # Z.ai client - use GLM-4.7 allowlist
+    elif "zai" in client_type:
+        sanitized = {}
+        removed_params = []
+
+        for key, value in provider_request.items():
+            if key in ZAI_GLM_PARAMS:
+                sanitized[key] = value
+            else:
+                removed_params.append(key)
+
+        if removed_params:
+            logger.debug(f"Z.ai: Filtered out unsupported parameters: {removed_params}")
+
+        return sanitized
+
+    # Cerebras client - use Cerebras allowlist
+    elif "cerebras" in client_type:
+        sanitized = {}
+        removed_params = []
+
+        for key, value in provider_request.items():
+            if key in CEREBRAS_PARAMS:
+                sanitized[key] = value
+            else:
+                removed_params.append(key)
+
+        if removed_params:
+            logger.debug(
+                f"Cerebras: Filtered out unsupported parameters: {removed_params}"
+            )
+
+        return sanitized
+
+    # OpenAI/Azure - use standard OpenAI allowlist
+    elif "openai" in client_type or "azure" in client_type:
+        sanitized = {}
+        removed_params = []
+
+        for key, value in provider_request.items():
+            if key in OPENAI_STANDARD_PARAMS:
+                sanitized[key] = value
+            else:
+                removed_params.append(key)
+
+        if removed_params:
+            logger.debug(
+                f"OpenAI/Azure: Filtered out non-standard parameters: {removed_params}"
+            )
+
+        return sanitized
+
+    # Unknown client - use conservative OpenAI standard params
+    else:
+        logger.warning(
+            f"Unknown client type: {client_type}. Using OpenAI standard parameters."
+        )
+        sanitized = {}
+
+        for key, value in provider_request.items():
+            if key in OPENAI_STANDARD_PARAMS:
+                sanitized[key] = value
+
+        return sanitized
 
 
 def _load_model_aliases(env_var_names=("OPTILLM_MODEL_ALIASES", "ZAI_MODEL_ALIASES")):
@@ -148,11 +281,11 @@ def _normalize_model_for_provider(model: str, client) -> str:
 def safe_completions_create(client, provider_request: dict):
     """Call client's chat.completions.create with provider-aware sanitization and fallbacks.
 
-    - Removes unsupported params (e.g., 'n' for Z.ai)
+    - Removes unsupported params via allowlist filtering
     - Normalizes model identifiers for the target provider
-    - Retries without 'n' if a TypeError indicates it's unsupported
+    - Handles provider-specific quirks (e.g., Z.ai 'n' in extra_body)
+    - Retries with sanitized parameters if a TypeError indicates unsupported params
     """
-    # Pre-sanitize for known providers
     client_type = str(type(client)).lower()
     req = dict(provider_request)
 
@@ -168,27 +301,46 @@ def safe_completions_create(client, provider_request: dict):
                 client_type,
             )
 
-    if "zai" in client_type:
-        # Z.ai requires 'n' via extra_body, not as top-level parameter
-        if "n" in req:
-            n_value = req.pop("n")
-            extra_body = req.get("extra_body", {})
-            if isinstance(extra_body, dict):
-                extra_body["n"] = n_value
-                req["extra_body"] = extra_body
-                logger.debug(f"Moved 'n={n_value}' to extra_body for Z.ai provider")
+    # Z.ai special handling: Move 'n' to extra_body BEFORE parameter filtering
+    if "zai" in client_type and "n" in req:
+        n_value = req.pop("n")  # Remove from top-level
+        extra_body = req.get("extra_body", {})
+        if isinstance(extra_body, dict):
+            extra_body["n"] = n_value
+            req["extra_body"] = extra_body
+            logger.debug(f"Z.ai: Moved 'n={n_value}' from top-level to extra_body")
+
+    # Apply allowlist filtering to remove unsupported parameters
+    req = strip_unsupported_params(client, req)
 
     try:
         return client.chat.completions.create(**req)
     except TypeError as e:
         msg = str(e)
-        # If the provider doesn't support 'n', retry without it
-        if "unexpected keyword argument 'n'" in msg or "n'" in msg:
-            sanitized = strip_unsupported_n(client, provider_request)
-            # Ensure model normalization is preserved on retry
+        # If the provider doesn't support some parameter, log and retry
+        if "unexpected keyword argument" in msg:
+            logger.warning(
+                f"Parameter error from provider: {msg}. Retrying with sanitized request."
+            )
+            # Retry with fresh sanitization from original request
+            sanitized = dict(provider_request)
+
+            # Apply Z.ai special handling on retry too
+            if "zai" in client_type and "n" in sanitized:
+                n_value = sanitized.pop("n")
+                extra_body = sanitized.get("extra_body", {})
+                if isinstance(extra_body, dict):
+                    extra_body["n"] = n_value
+                    sanitized["extra_body"] = extra_body
+
+            # Normalize model on retry
             if "model" in sanitized:
                 sanitized["model"] = _normalize_model_for_provider(
                     sanitized["model"], client
                 )
+
+            # Filter parameters
+            sanitized = strip_unsupported_params(client, sanitized)
+
             return client.chat.completions.create(**sanitized)
         raise
