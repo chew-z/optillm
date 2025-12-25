@@ -2,22 +2,22 @@
     "default": [
         {
             "name": "OBSERVER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex",
             "system_suffix": " You are an expert observer. Find hidden patterns and non-obvious details."
         },
         {
             "name": "BRAINSTORMER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex",
             "system_suffix": " You are a creative brainstormer. Generate derived insights from initial observations."
         },
         {
             "name": "PLANNER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex",
             "system_suffix": " You are a strategic planner. Create a natural language solution plan."
         },
         {
             "name": "CODER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex",
             "system_suffix": " You are an expert programmer. Implement the solution in code."
         }
     ],
@@ -29,7 +29,7 @@
         },
         {
             "name": "BRAINSTORMER",
-            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "model": "openrouter/anthropic/claude-haiku-4.5",
             "system_suffix": " You are a rapid brainstormer. Generate quick insights."
         },
         {
@@ -39,7 +39,7 @@
         },
         {
             "name": "CODER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex-mini",
             "system_suffix": " You are a fast programmer. Implement the solution quickly."
         }
     ],
@@ -72,7 +72,7 @@
     "coding": [
         {
             "name": "OBSERVER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex-max",
             "system_suffix": " You are a code analyst. Identify edge cases and constraints.",
             "reasoning_effort": "high"
         },
@@ -90,7 +90,7 @@
         },
         {
             "name": "CODER",
-            "model": "openrouter/openai/gpt-5.2-codex",
+            "model": "openrouter/openai/gpt-5.1-codex-mini",
             "system_suffix": " You are a senior developer. Write clean, efficient, and bug-free Python code.",
             "reasoning_effort": "high"
         }

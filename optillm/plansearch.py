@@ -17,8 +17,34 @@ PLANSEARCH_REQUIRED_ROLE_NAMES = [
     "PLANNER",
     "CODER",
 ]
+PLANSEARCH_GENERATION_ROLE_COUNT = 4
+DEFAULT_REASONING_EFFORT = "high"
 
 _litellm_client = None
+
+
+def _validate_plansearch_profile(config: List[Dict[str, Any]]) -> bool:
+    """Ensure a PlanSearch profile defines all required roles."""
+
+    if len(config) < len(PLANSEARCH_REQUIRED_ROLE_NAMES):
+        logger.error(
+            "PlanSearch profile has %s roles but requires %s (%s)",
+            len(config),
+            len(PLANSEARCH_REQUIRED_ROLE_NAMES),
+            ", ".join(PLANSEARCH_REQUIRED_ROLE_NAMES),
+        )
+        return False
+
+    defined_names = {role.get("name") for role in config if isinstance(role, dict)}
+    missing = [name for name in PLANSEARCH_REQUIRED_ROLE_NAMES if name not in defined_names]
+    if missing:
+        logger.error(
+            "PlanSearch profile is missing required roles: %s",
+            ", ".join(missing),
+        )
+        return False
+
+    return True
 
 
 def _get_litellm_client():
@@ -32,6 +58,48 @@ def _get_litellm_client():
     return _litellm_client
 
 
+def _get_role_by_name(
+    config: List[Dict[str, Any]],
+    role_name: str,
+    default_model: str = "openrouter/google/gemini-3-flash-preview",
+) -> Dict[str, Any]:
+    """Find a role configuration by name from the config list.
+
+    Args:
+        config: Full configuration list
+        role_name: Name/title of the role to find (e.g., 'OBSERVER', 'PLANNER')
+        default_model: Default model if role not found
+
+    Returns:
+        Role configuration dict with model, reasoning_effort, etc.
+    """
+    for role in config:
+        # Check both 'name' and 'title' fields for flexibility
+        if role.get("name") == role_name or role.get("title") == role_name:
+            return role
+    # Fallback to default model
+    logger.warning(
+        f"Role {role_name} not found in config, using default model {default_model}"
+    )
+    return {
+        "name": role_name.lower(),
+        "title": role_name,
+        "model": default_model,
+        "reasoning_effort": "high",
+        "system_suffix": "",
+    }
+
+
+def _determine_default_model(preferred_model: Optional[str]) -> str:
+    if (
+        preferred_model
+        and preferred_model not in {"auto", "none"}
+        and not preferred_model.startswith("pre-")
+    ):
+        return preferred_model
+    return os.environ.get("OPTILLM_MODEL", "gpt-4o-mini")
+
+
 def _build_homogeneous_plansearch_config(model: str) -> List[Dict[str, Any]]:
     """Build a config where all roles use the same model."""
     return [
@@ -43,41 +111,44 @@ def _build_homogeneous_plansearch_config(model: str) -> List[Dict[str, Any]]:
 
 
 def _resolve_plansearch_config(
-    model: str,
+    model: Optional[str],
 ) -> Tuple[List[Dict[str, Any]], str]:
     """Return the PlanSearch role configuration and fallback model."""
+
     resolved_config = None
 
     if model:
-        resolved_config = load_complex_profile("plansearch", model)
+        force_predefined = model.startswith("pre-")
+        candidate_key = model[4:] if force_predefined else model
+        resolved_config = load_complex_profile("plansearch", candidate_key)
+        if resolved_config and not _validate_plansearch_profile(resolved_config):
+            resolved_config = None
+
         if resolved_config:
-            logger.info("PlanSearch: Using complex profile '%s'", model)
+            logger.info("PlanSearch: Using complex profile '%s'", candidate_key)
+        elif force_predefined:
+            logger.warning(
+                "PlanSearch: Requested complex profile '%s' not found; falling back to default roles",
+                candidate_key,
+            )
 
     if resolved_config:
-        # Validate roles
-        defined_names = {role.get("name") for role in resolved_config}
-        missing = [
-            name for name in PLANSEARCH_REQUIRED_ROLE_NAMES if name not in defined_names
-        ]
-        if missing:
-            logger.warning(
-                "PlanSearch profile '%s' is missing roles: %s. Filling with default model.",
-                model,
-                missing,
-            )
-            # Fill missing with default model (taken from first role or fallback)
-            default_model = resolved_config[0].get("model", "gpt-4o")
-            for name in missing:
-                resolved_config.append({"name": name, "model": default_model})
+        default_model = _determine_default_model(None)
+        return resolved_config, default_model
 
-        return resolved_config, resolved_config[0].get("model", "gpt-4o")
+    default_model = _determine_default_model(model)
+    if not model or model in {"auto", "none"}:
+        logger.info(
+            "PlanSearch: No model specified, using default OPTILLM_MODEL: %s",
+            default_model,
+        )
+    else:
+        logger.info(
+            "PlanSearch: Using model '%s' for all PlanSearch roles",
+            default_model,
+        )
 
-    # Fallback to homogeneous config
-    logger.info(
-        "PlanSearch: Using model '%s' for all roles",
-        model,
-    )
-    return _build_homogeneous_plansearch_config(model), model
+    return _build_homogeneous_plansearch_config(default_model), default_model
 
 
 class PlanSearch:
@@ -104,13 +175,23 @@ class PlanSearch:
 
     def _get_client_model_and_params(self, role_name: str) -> Tuple[Any, str, str, str]:
         """Get the appropriate client, model, system suffix, and reasoning effort for a given role."""
-        role_config = next(
-            (r for r in self.config if r["name"] == role_name),
-            {"model": self.default_model},
-        )
+        role_config = _get_role_by_name(self.config, role_name, self.default_model)
         model = role_config.get("model", self.default_model)
         system_suffix = role_config.get("system_suffix", "")
-        reasoning_effort = role_config.get("reasoning_effort", "medium")
+        reasoning_effort = role_config.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
+
+        # Route to appropriate client based on model prefix
+        # OpenRouter models go through LiteLLM, others use the default client (e.g., Z.ai)
+        if "/" in model:  # Heuristic for OpenRouter/LiteLLM models
+            provider = "OpenRouter (via LiteLLM)"
+        else:
+            provider = f"Direct ({type(self.default_client).__name__})"
+
+        # Log the role configuration with model and parameters
+        logger.info(
+            f"{role_name}: Using model='{model}' via {provider}, "
+            f"reasoning_effort={reasoning_effort}, max_tokens={self.max_tokens}"
+        )
 
         if "/" in model:  # Heuristic for OpenRouter/LiteLLM models
             return _get_litellm_client(), model, system_suffix, reasoning_effort

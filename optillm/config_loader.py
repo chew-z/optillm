@@ -97,7 +97,7 @@ def load_complex_profile(
     """Return a deep copy of the requested complex-model profile.
 
     Args:
-        approach: Either "bon" or "moa".
+        approach: Either "bon", "moa", or "plansearch".
         profile_name: Profile identifier (e.g., "rapid", "deep").
 
     Returns:
